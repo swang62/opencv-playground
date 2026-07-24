@@ -9,11 +9,12 @@ import time
 import cv2
 
 from src import config
+from src.body import draw_hand_skeleton, draw_pose_skeleton
 from src.camera import create_camera
 from src.detection import annotate_frame, extract_detections
 from src.face import apply_privacy, draw_face_mesh
 from src.filters import apply_visual_filter
-from src.state import get_predict_kwargs
+from src.state import color_name_to_bgr, get_predict_kwargs
 
 logger = logging.getLogger(__name__)
 
@@ -79,9 +80,7 @@ class CapturePipeline:
         self.state.set_camera_error(None)
         logger.info("Camera opened successfully")
 
-        self._capture_thread = threading.Thread(
-            target=self.capture_loop, daemon=True
-        )
+        self._capture_thread = threading.Thread(target=self.capture_loop, daemon=True)
         self._inference_thread = threading.Thread(
             target=self.inference_loop, daemon=True
         )
@@ -175,13 +174,17 @@ class CapturePipeline:
                 time.sleep(0.1)
                 continue
 
+            oc = color_name_to_bgr(self.state.overlay_color_name)
+            ft = max(2, int(self.state.font_scale * 1.5))
+
             if mode == "face":
                 detections = results  # already extracted dicts from FaceEngine
                 draw_frame = frame.copy()
                 if self.state.face_remove_background:
                     draw_frame = self.model.face_engine.remove_background(draw_frame)
                 draw_frame = apply_visual_filter(
-                    draw_frame, self.state.visual_filter,
+                    draw_frame,
+                    self.state.visual_filter,
                 )
                 annotated = draw_face_mesh(
                     draw_frame,
@@ -189,27 +192,44 @@ class CapturePipeline:
                     show_wireframe=self.state.face_show_wireframe,
                     show_headpose=self.state.face_show_headpose,
                     show_labels=self.state.face_show_labels,
+                    overlay_color=oc,
+                    font_scale=self.state.font_scale,
+                    font_thickness=ft,
+                    line_thickness=self.state.line_thickness,
                 )
                 privacy_mode = self.state.privacy_mode
                 if privacy_mode != "None":
                     annotated = apply_privacy(
-                        annotated, detections, privacy_mode, inplace=True,
+                        annotated,
+                        detections,
+                        privacy_mode,
+                        inplace=True,
                     )
 
                 if self.state.face_show_skeleton:
                     try:
                         poses = self.model.body_engine.process_pose(frame)
                         for pts in poses:
-                            from src.body import draw_pose_skeleton
-                            draw_pose_skeleton(annotated, pts)
+                            draw_pose_skeleton(
+                                annotated,
+                                pts,
+                                color=oc,
+                                thickness=self.state.line_thickness,
+                                joint_radius=max(3, self.state.line_thickness + 2),
+                            )
                     except Exception:
                         pass
 
                     try:
                         hands = self.model.body_engine.process_hands(frame)
                         for pts in hands:
-                            from src.body import draw_hand_skeleton
-                            draw_hand_skeleton(annotated, pts)
+                            draw_hand_skeleton(
+                                annotated,
+                                pts,
+                                color=oc,
+                                thickness=self.state.line_thickness,
+                                joint_radius=max(3, self.state.line_thickness + 2),
+                            )
                     except Exception:
                         pass
             else:
@@ -230,11 +250,18 @@ class CapturePipeline:
                     detections = [d for d in detections if d["label"] in top_n]
 
                 draw_frame = apply_visual_filter(
-                    frame.copy(), self.state.visual_filter,
+                    frame.copy(),
+                    self.state.visual_filter,
                 )
                 annotated = annotate_frame(
-                    draw_frame, detections, self.state.frames_per_second, mode,
+                    draw_frame,
+                    detections,
+                    mode,
                     mask_opacity=self.state.mask_opacity,
+                    overlay_color=oc,
+                    font_scale=self.state.font_scale,
+                    font_thickness=ft,
+                    line_thickness=self.state.line_thickness,
                 )
 
             elapsed = time.perf_counter() - t0

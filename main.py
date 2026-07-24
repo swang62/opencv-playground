@@ -1,12 +1,14 @@
 import logging
+import os
+
+# Suppress benign TFLite/MediaPipe C++ warnings (feedback manager, XNNPACK, etc.)
+os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     datefmt="%H:%M:%S",
 )
-
-logging.getLogger("absl").setLevel(logging.WARNING)
 
 from src.app import main
 

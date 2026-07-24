@@ -28,14 +28,19 @@ def apply_visual_filter(frame: np.ndarray, mode: str) -> np.ndarray:
         result[:, :, 0] = np.roll(result[:, :, 0], -3, axis=1)
         scanlines = np.zeros((h, w, 3), dtype=np.uint8)
         scanlines[1::2, :] = 50
-        result = cv2.subtract(result.astype(np.int16), scanlines.astype(np.int16)).clip(0, 255).astype(np.uint8)
+        result = (
+            cv2.subtract(result.astype(np.int16), scanlines.astype(np.int16))
+            .clip(0, 255)
+            .astype(np.uint8)
+        )
         return result
 
     if mode == "Comic":
         smooth = cv2.bilateralFilter(frame, 9, 75, 75)
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        edges = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_MEAN_C,
-                                      cv2.THRESH_BINARY, 9, 2)
+        edges = cv2.adaptiveThreshold(
+            gray, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY, 9, 2
+        )
         smooth[edges == 0] = (0, 0, 0)
         return smooth
 
@@ -43,6 +48,10 @@ def apply_visual_filter(frame: np.ndarray, mode: str) -> np.ndarray:
 
 
 FILTER_NAMES = [
-    "None", "Sketch", "Thermal", "CRT", "Comic",
+    "None",
+    "Sketch",
+    "Thermal",
+    "CRT",
+    "Comic",
     "Invert",
 ]

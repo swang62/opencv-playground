@@ -3,11 +3,27 @@
 from __future__ import annotations
 
 import logging
+import ssl
 import threading
+import urllib.request
 from pathlib import Path
 
+import mediapipe as mp
 import cv2
 import numpy as np
+from mediapipe.tasks import python
+from mediapipe.tasks.python import vision
+from uniface.attribute import AgeGender
+from uniface.attribute.emotion import Emotion
+from uniface.headpose import HeadPose
+from uniface.constants import MODNetWeights
+from uniface.matting import MODNet
+from uniface.privacy import BlurFace
+from uniface.spoofing import MiniFASNet
+from uniface.types import AttributeResult
+from uniface.types import EmotionResult
+from uniface.types import Face as UniFace
+from uniface.types import HeadPoseResult
 
 from src import config
 
@@ -185,9 +201,6 @@ def download_model() -> Path:
     if MODEL_FILE.exists():
         return MODEL_FILE
 
-    import ssl
-    import urllib.request
-
     logger.info("Downloading Face Landmarker model (~12 MB) ...")
     # macOS Python framework build often lacks root CA bundle.
     ctx = ssl.create_default_context()
@@ -227,6 +240,10 @@ def draw_face_mesh(
     show_wireframe: bool = True,
     show_headpose: bool = True,
     show_labels: bool = True,
+    overlay_color=config.OVERLAY_COLOR,
+    font_scale: float = config.FONT_SCALE,
+    font_thickness: int = config.FONT_THICKNESS,
+    line_thickness: int = config.OVERLAY_THICKNESS,
 ) -> np.ndarray:
     """Draw face mesh, head pose arrow, and attribute labels on *frame*.
 
@@ -262,8 +279,8 @@ def draw_face_mesh(
                     frame,
                     [pixel_pts],
                     isClosed=False,
-                    color=config.OVERLAY_COLOR,
-                    thickness=config.OVERLAY_THICKNESS,
+                    color=overlay_color,
+                    thickness=line_thickness,
                 )
 
             for i in range(0, len(pts), config.FACE_POINT_STRIDE):
@@ -271,7 +288,7 @@ def draw_face_mesh(
                     frame,
                     (pts[i][0], pts[i][1]),
                     2,
-                    LANDMARK_COLORS[i],
+                    overlay_color,
                     -1,
                     lineType=cv2.LINE_AA,
                 )
@@ -315,8 +332,8 @@ def draw_face_mesh(
                 (tw, th), _ = cv2.getTextSize(
                     label,
                     cv2.FONT_HERSHEY_SIMPLEX,
-                    config.FONT_SCALE,
-                    config.FONT_THICKNESS,
+                    font_scale,
+                    font_thickness,
                 )
                 tx = max(cx_text - tw // 2, 4)
                 ty = max(y1 - 8, th + 4)
@@ -325,9 +342,9 @@ def draw_face_mesh(
                     label,
                     (tx, ty),
                     cv2.FONT_HERSHEY_SIMPLEX,
-                    config.FONT_SCALE,
+                    font_scale,
                     (0, 255, 255),
-                    config.FONT_THICKNESS,
+                    font_thickness,
                     lineType=cv2.LINE_AA,
                 )
 
@@ -339,8 +356,8 @@ def draw_face_mesh(
             (sw, sh), _ = cv2.getTextSize(
                 spoof_label,
                 cv2.FONT_HERSHEY_SIMPLEX,
-                config.FONT_SCALE,
-                config.FONT_THICKNESS,
+                font_scale,
+                font_thickness,
             )
             sx = max(cx_s - sw // 2, 4)
             sy = min(y2 + sh + 8, frame.shape[0] - 4)
@@ -349,9 +366,9 @@ def draw_face_mesh(
                 spoof_label,
                 (sx, sy),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                config.FONT_SCALE,
+                font_scale,
                 (0, 255, 255),
-                config.FONT_THICKNESS,
+                font_thickness,
                 lineType=cv2.LINE_AA,
             )
 
@@ -374,8 +391,6 @@ def apply_privacy(
 
     bboxes = [f["bbox"] for f in faces]
     try:
-        from uniface.privacy import BlurFace
-
         method = mode.lower()
         if method == "ellipticalblur":
             method = "elliptical"
@@ -423,10 +438,6 @@ class FaceEngine:
 
             model_path = download_model()
 
-            import mediapipe as mp  # noqa: F401 — needed for mp.Image below
-            from mediapipe.tasks import python
-            from mediapipe.tasks.python import vision
-
             base_opts = python.BaseOptions(
                 model_asset_path=str(model_path),
                 delegate=python.BaseOptions.Delegate.CPU,
@@ -441,6 +452,10 @@ class FaceEngine:
             self._landmarker = vision.FaceLandmarker.create_from_options(opts)
             logger.info("Face Landmarker loaded (CPU)")
 
+    def warmup(self):
+        self.ensure_loaded()
+        self._ensure_uniface()
+
     def _ensure_uniface(self):
         """Lazy-load UniFace attribute models."""
         if self._headpose is not None:
@@ -449,19 +464,12 @@ class FaceEngine:
             if self._headpose is not None:
                 return
 
-            from uniface.attribute import AgeGender
-            from uniface.attribute.emotion import Emotion
-            from uniface.headpose import HeadPose
-            from uniface.spoofing import MiniFASNet
-
             logger.info("Loading UniFace attribute models...")
             self._headpose = HeadPose()  # type: ignore[no-untyped-call]
             self._age_gender = AgeGender()  # type: ignore[no-untyped-call]
             self._emotion = Emotion()  # type: ignore[no-untyped-call]
             self._spoofing = MiniFASNet()  # type: ignore[no-untyped-call]
             try:
-                from uniface.matting import MODNet, MODNetWeights
-
                 self._background_remover = MODNet(
                     model_name=MODNetWeights.WEBCAM,
                     input_size=192,
@@ -469,13 +477,11 @@ class FaceEngine:
                 self._bg_alpha_cache = None
                 logger.info("Background remover loaded (webcam, 192px)")
             except Exception:
-                logger.warning("Background remover unavailable")
+                logger.warning("Background remover init failed")
             logger.info("UniFace models ready")
 
     def _estimate_headpose(self, face_crop):
         try:
-            from uniface.types import HeadPoseResult
-
             hp = self._headpose.estimate(face_crop)  # pyright: ignore
             if isinstance(hp, HeadPoseResult):
                 return {
@@ -494,9 +500,6 @@ class FaceEngine:
         emotion = None
 
         try:
-            from uniface.types import AttributeResult
-            from uniface.types import Face as UniFace
-
             uf_face = UniFace(
                 bbox=np.array(bbox, dtype=np.float64),
                 confidence=0.95,
@@ -510,10 +513,7 @@ class FaceEngine:
             pass
 
         try:
-            from uniface.types import EmotionResult
-            from uniface.types import Face as UniFace2
-
-            uf_face2 = UniFace2(
+            uf_face2 = UniFace(
                 bbox=np.array(bbox, dtype=np.float64),
                 confidence=0.95,
                 landmarks=np.array(pts5, dtype=np.float64).reshape(-1, 2),
@@ -579,8 +579,6 @@ class FaceEngine:
 
         self._frame_count += 1
         timestamp_ms = self._frame_count * 33  # ~30 FPS pacing
-
-        import mediapipe as mp
 
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         mp_img = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)

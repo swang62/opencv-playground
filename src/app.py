@@ -53,15 +53,23 @@ def index():
     # ---- page chrome --------------------------------------------------------
     ui.add_head_html("""
     <style>
-      .q-tab .q-tab__content { flex-direction: row; gap: 6px; }
+      .q-tab { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex-shrink: 1; min-width: 0; }
+      .q-tab .q-tab__content { flex-direction: row; gap: 4px; }
       .q-tab .q-tab__icon { margin: 0; }
     </style>
     """)
 
-    with ui.element("div").classes(FW).style("max-width: 95%; margin: 24px auto;"):
-        with ui.row().classes("w-full no-wrap"):
-            # -- left column: controls --
-            with ui.column().classes("col-12 col-md-3"):
+    with ui.element("div").classes(FW).style("max-width: 98%; margin: 24px auto;"):
+        with ui.row().classes("w-full flex-wrap items-start"):
+            # -- webcam (left on desktop, top on mobile) --
+            with ui.column().classes("flex-1 min-w-0"):
+                ui.label("Real-time Object Detection").classes(
+                    "text-h4 text-weight-bold text-center w-full q-mb-md"
+                )
+                cam = ui.interactive_image().classes("w-full border-1 rounded")
+
+            # -- controls (right on desktop, bottom on mobile) --
+            with ui.column().classes("flex-none"):
                 ui.element("div").style("height: 56px")  # spacer to align with title
 
                 # Search -------------------------------------------------------
@@ -79,9 +87,9 @@ def index():
 
                 with ui.card().classes("w-full q-pa-none"):
                     with ui.tabs().classes("w-full") as tabs:
-                        ui.tab("Find", icon="search").classes("w-full")
-                        ui.tab("Detect", icon="visibility").classes("w-full")
-                        ui.tab("Face", icon="face").classes("w-full")
+                        ui.tab("Find", icon="search")
+                        ui.tab("Detect", icon="visibility")
+                        ui.tab("Face", icon="face")
                     tabs.on_value_change(lambda e: on_tab(e.value))
 
                     with ui.tab_panels(tabs, value="Find").classes("w-full"):
@@ -150,7 +158,7 @@ def index():
 
                         with ui.tab_panel("Face"):
                             ui.label("Privacy mode").classes(CAP)
-                            with ui.row().classes("w-full no-wrap"):
+                            with ui.row().classes(IWN):
                                 ui.toggle(
                                     ["None", "Pixelate", "Gaussian"],
                                     value="None",
@@ -191,12 +199,56 @@ def index():
                                     state, "face_show_labels"
                                 )
 
-            # -- right column: live camera feed --
-            with ui.column().classes("col-12 col-md-9"):
-                ui.label("Real-time object detection").classes(
-                    "text-h4 text-weight-bold text-center w-full q-mb-md"
-                )
-                cam = ui.interactive_image().classes("w-full border-1 rounded")
+                # -- Global settings below tabs --
+                with ui.card().classes("w-full q-pa-md"):
+                    ui.label("Global").classes("text-bold text-h6")
+                    with ui.row().classes(IWN):
+                        ui.label("Font").classes(CAP)
+                        font_slider = ui.slider(
+                            min=1.0,
+                            max=3.0,
+                            step=0.1,
+                            value=state.font_scale,
+                            on_change=lambda e: font_label.set_text(f"{e.value:.1f}"),
+                        ).classes(GROW)
+                        font_slider.bind_value_to(state, "font_scale")
+                        font_label = ui.label(f"{state.font_scale:.1f}").classes(
+                            "text-bold q-ml-sm"
+                        )
+                    with ui.row().classes(IWN):
+                        ui.label("Thickness").classes(CAP)
+                        thick_slider = ui.slider(
+                            min=1,
+                            max=8,
+                            step=1,
+                            value=state.line_thickness,
+                            on_change=lambda e: thick_label.set_text(
+                                f"{int(e.value or 1)}"
+                            ),
+                        ).classes(GROW)
+                        thick_slider.bind_value_to(state, "line_thickness")
+                        thick_label = ui.label(f"{state.line_thickness}").classes(
+                            "text-bold q-ml-sm"
+                        )
+                    with ui.row().classes("items-center w-full no-wrap justify-evenly"):
+                        colors = [
+                            ("#ffffff", "#000000", "White"),
+                            ("#000000", "#ffffff", "Black"),
+                            ("#ff0000", "#ffffff", "Red"),
+                            ("#ffff00", "#000000", "Yellow"),
+                            ("#00ff00", "#000000", "Green"),
+                            ("#0000ff", "#ffffff", "Blue"),
+                            ("#ff00ff", "#ffffff", "Magenta"),
+                        ]
+                        for bg, fg, name in colors:
+                            ui.button(
+                                "",
+                                on_click=lambda n=name: setattr(
+                                    state, "overlay_color_name", n
+                                ),
+                            ).props("dense flat padding=none").style(
+                                f"background: {bg}; width: 20px; height: 20px; min-width: 20px; border-radius: 4px;"
+                            )
 
     # ---- Timer-driven refresh ------------------------------------------------
     def refresh_all():

@@ -30,6 +30,9 @@ class AppState:
     privacy_mode: str = "None"
     visual_filter: str = "None"
     mask_opacity: float = config.MASK_OPACITY
+    overlay_color_name: str = "Green"
+    font_scale: float = config.FONT_SCALE
+    line_thickness: int = config.OVERLAY_THICKNESS
 
     _lock: threading.Lock = field(
         default_factory=threading.Lock, repr=False, compare=False
@@ -84,3 +87,18 @@ def get_predict_kwargs(state: AppState):
         "retina_masks": is_find,
         "max_det": 10,
     }
+
+
+COLOR_MAP: dict[str, tuple[int, int, int]] = {
+    "White": (255, 255, 255),
+    "Black": (0, 0, 0),
+    "Red": (0, 0, 255),
+    "Yellow": (0, 255, 255),
+    "Green": (0, 255, 0),
+    "Blue": (255, 0, 0),
+    "Magenta": (255, 0, 255),
+}
+
+
+def color_name_to_bgr(name: str) -> tuple[int, int, int]:
+    return COLOR_MAP.get(name, (0, 255, 0))  # default green

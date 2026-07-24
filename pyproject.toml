@@ -9,12 +9,26 @@ dependencies = [
     "opencv-python>=4.9.0",
     "pyobjc-framework-AVFoundation>=10 ; platform_system == 'Darwin'",
     "mediapipe>=0.10.35",
-    "uniface>=3.7.1",
+    "uniface[cpu]>=3.7.1",
+    "clip",
 ]
 
 [dependency-groups]
-dev = ["pytest>=8"]
+dev = [
+    "pytest>=8",
+    "ruff>=0.15",
+    "basedpyright>=1.39",
+    "pre-commit>=4",
+]
 
 [tool.uv]
 package = true
 default-groups = "all"
+
+[tool.uv.sources]
+clip = { git = "https://github.com/ultralytics/CLIP.git" }
+
+[tool.ruff.lint]
+ignore = ["E402"]
+[tool.ruff.format]
+docstring-code-format = true

@@ -6,8 +6,12 @@ import logging
 import threading
 
 import torch
+from ultralytics import YOLO
+from ultralytics.nn.text_model import MobileCLIPTS
 
 from src import config
+from src.body import BodyEngine
+from src.face import FaceEngine
 
 logger = logging.getLogger(__name__)
 
@@ -34,8 +38,6 @@ def get_text_encoder():
     """Return the shared MobileCLIPTS text encoder, built once on CPU."""
     global text_encoder
     if text_encoder is None:
-        from ultralytics.nn.text_model import MobileCLIPTS
-
         text_encoder = MobileCLIPTS(
             torch.device("cpu"), weight=f"{config.MODELS_DIR}/mobileclip2_b.ts"
         )
@@ -57,9 +59,7 @@ def encode_text(texts: list[str]) -> torch.Tensor:
 class ModelBundle:
     """Routes frames to the prompted or prompt-free model.
 
-    Only the prompted model is loaded at startup. The prompt-free model
-    is lazy-loaded on first switch to ``"everything"`` mode and cached
-    thereafter.
+    All models are loaded and warmed up at startup.
     """
 
     def __init__(self, prompted, promptfree_path: str, device: str):
@@ -70,13 +70,11 @@ class ModelBundle:
         self.device = device
         self._last_target: str = ""
         self._text_prompt_embedding_cache: dict[str, torch.Tensor] = {}
+        self._face_engine: FaceEngine | None = None
+        self._body_engine: BodyEngine | None = None
 
     _prompt_thread: threading.Thread | None = None
     _prompt_pending: str = ""
-    _face_engine = None
-    _body_engine = None
-    _face_lock: threading.Lock = threading.Lock()
-    _body_lock: threading.Lock = threading.Lock()
 
     @property
     def promptfree(self):
@@ -85,8 +83,6 @@ class ModelBundle:
             with self._promptfree_lock:
                 if self._promptfree is not None:
                     return self._promptfree
-                from ultralytics import YOLO
-
                 logger.info("Lazy-loading prompt-free model...")
                 m = YOLO(self._promptfree_path)
                 m.to(self.device)
@@ -94,6 +90,18 @@ class ModelBundle:
                 self._promptfree = m
                 logger.info("Prompt-free model ready")
         return self._promptfree
+
+    @property
+    def face_engine(self):
+        if self._face_engine is None:
+            self._face_engine = FaceEngine()
+        return self._face_engine
+
+    @property
+    def body_engine(self):
+        if self._body_engine is None:
+            self._body_engine = BodyEngine()
+        return self._body_engine
 
     def set_prompt(self, target: str):
         """Set a new text prompt, using cached embeddings if available."""
@@ -121,32 +129,6 @@ class ModelBundle:
         self._text_prompt_embedding_cache[target] = tpe
         self.prompted.set_classes([target], embeddings=tpe)
         self._last_target = target
-
-    @property
-    def face_engine(self):
-        """Lazy-load and cache the Face Landmarker on first access."""
-        if self._face_engine is None:
-            with self._face_lock:
-                if self._face_engine is not None:
-                    return self._face_engine
-                from src.face import FaceEngine
-
-                self._face_engine = FaceEngine()
-                logger.info("Face engine ready")
-        return self._face_engine  # type: ignore[return-value]
-
-    @property
-    def body_engine(self):
-        """Lazy-load and cache the Pose + Hand Landmarker on first access."""
-        if self._body_engine is None:
-            with self._body_lock:
-                if self._body_engine is not None:
-                    return self._body_engine
-                from src.body import BodyEngine
-
-                self._body_engine = BodyEngine()
-                logger.info("Body engine ready")
-        return self._body_engine  # type: ignore[return-value]
 
     def predict(self, frame, mode: str, **kwargs):
         """Run inference through the model matching *mode*."""
@@ -179,34 +161,27 @@ class ModelBundle:
         except Exception as exc:
             logger.warning("Prompt-free model load failed: %s", exc)
 
-        logger.info("Pre-loading face engine...")
+        logger.info("Pre-loading face engine (MediaPipe + UniFace)...")
         try:
-            _ = self.face_engine
+            self.face_engine.warmup()
         except Exception as exc:
             logger.warning("Face engine load failed: %s", exc)
 
-        logger.info("Pre-loading body engine...")
+        logger.info("Pre-loading body engine (Pose + Hand)...")
         try:
-            _ = self.body_engine
+            self.body_engine.warmup()
         except Exception as exc:
             logger.warning("Body engine load failed: %s", exc)
 
         logger.info("All models ready")
 
 
-def load_model_bundle(
-    prompted_path: str, promptfree_path: str
-) -> ModelBundle:
+def load_model_bundle(prompted_path: str, promptfree_path: str) -> ModelBundle:
     """Load the prompted checkpoint, move to device, warm up, and return a bundle.
-
-    The prompt-free model is loaded lazily on first use (switch to
-    ``"everything"`` mode), not at startup.
 
     Requires network access on first call (downloads checkpoint files).
     Subsequent calls use locally cached ``.pt`` files.
     """
-    from ultralytics import YOLO
-
     device = get_device()
     prompted = YOLO(prompted_path)
     prompted.to(device)
