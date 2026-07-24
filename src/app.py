@@ -237,7 +237,7 @@ def index():
                             ("#ff0000", "#ffffff", "Red"),
                             ("#ffff00", "#000000", "Yellow"),
                             ("#00ff00", "#000000", "Green"),
-                            ("#0000ff", "#ffffff", "Blue"),
+                            ("#00ffff", "#000000", "Cyan"),
                             ("#ff00ff", "#ffffff", "Magenta"),
                         ]
                         for bg, fg, name in colors:
