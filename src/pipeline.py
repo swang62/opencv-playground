@@ -52,6 +52,41 @@ class CapturePipeline:
         self._inference_thread: threading.Thread | None = None
         self.error: str | None = None
 
+    def _get_first_frame(self, timeout_seconds: float = 5.0):
+        deadline = time.time() + timeout_seconds
+        while not self.state.shutdown and time.time() < deadline:
+            with self._frame_lock:
+                frame = self._latest_frame
+            if frame is not None:
+                return frame.copy()
+            time.sleep(0.01)
+        return None
+
+    def _prewarm_real_frame(self, frame):
+        logger.info("Pre-warming real webcam frame paths...")
+
+        try:
+            for _ in range(3):
+                self.model.face_engine.process(
+                    frame,
+                    show_headpose=False,
+                    show_labels=False,
+                )
+        except Exception as exc:
+            logger.warning("Real-frame face warmup failed: %s", exc)
+
+        try:
+            self.model.body_engine.process_pose(frame)
+        except Exception as exc:
+            logger.warning("Real-frame pose warmup failed: %s", exc)
+
+        try:
+            self.model.body_engine.process_hands(frame)
+        except Exception as exc:
+            logger.warning("Real-frame hand warmup failed: %s", exc)
+
+        logger.info("Real webcam frame warmup complete")
+
     def start(self):
         """Open the camera and start capture / inference threads."""
         logger.info("Starting capture pipeline (camera=%s)", self._camera_input)
@@ -81,10 +116,19 @@ class CapturePipeline:
         logger.info("Camera opened successfully")
 
         self._capture_thread = threading.Thread(target=self.capture_loop, daemon=True)
+        self._capture_thread.start()
+
+        first_frame = self._get_first_frame()
+        if first_frame is not None:
+            self._prewarm_real_frame(first_frame)
+        else:
+            logger.warning(
+                "Timed out waiting for first camera frame; skipping real-frame warmup"
+            )
+
         self._inference_thread = threading.Thread(
             target=self.inference_loop, daemon=True
         )
-        self._capture_thread.start()
         self._inference_thread.start()
         logger.info("Capture and inference threads started")
 
@@ -151,8 +195,6 @@ class CapturePipeline:
                 continue
             stall_warned = False
 
-            t0 = time.perf_counter()
-
             # Capture mode once to avoid TOCTOU race: the UI thread can
             # switch modes between the predict call and the branch below.
             mode = self.state.mode
@@ -182,6 +224,8 @@ class CapturePipeline:
 
             if mode == "face":
                 detections = results  # already extracted dicts from FaceEngine
+                show_headpose = self.state.face_show_headpose
+                show_labels = self.state.face_show_labels
                 draw_frame = frame.copy()
                 draw_frame = apply_visual_filter(
                     draw_frame,
@@ -191,8 +235,8 @@ class CapturePipeline:
                     draw_frame,
                     detections,
                     show_wireframe=self.state.face_show_wireframe,
-                    show_headpose=self.state.face_show_headpose,
-                    show_labels=self.state.face_show_labels,
+                    show_headpose=show_headpose,
+                    show_labels=show_labels,
                     overlay_color=oc,
                     font_scale=self.state.font_scale,
                     font_thickness=ft,
@@ -233,6 +277,7 @@ class CapturePipeline:
                             )
                     except Exception:
                         pass
+
             else:
                 detections = extract_detections(
                     results, self.state.confidence, need_masks=(mode == "find")
@@ -264,10 +309,6 @@ class CapturePipeline:
                     font_thickness=ft,
                     line_thickness=self.state.line_thickness,
                 )
-
-            elapsed = time.perf_counter() - t0
-            new_fps = 1.0 / elapsed if elapsed > 0 else 0.0
-            self.state.update_frames_per_second(new_fps)
 
             success, jpeg = cv2.imencode(".jpg", annotated)
             if success:

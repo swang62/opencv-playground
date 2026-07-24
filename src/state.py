@@ -20,7 +20,6 @@ class AppState:
     models_ready: bool = False
     models_error: str | None = None
     camera_error: str | None = None
-    frames_per_second: float = 0.0
     shutdown: bool = False
     face_show_wireframe: bool = True
     face_show_headpose: bool = True
@@ -49,10 +48,6 @@ class AppState:
         if value is not None:
             with self._lock:
                 self.confidence = value
-
-    def update_frames_per_second(self, value: float):
-        with self._lock:
-            self.frames_per_second = value
 
     def set_camera_ready(self, value: bool):
         with self._lock:

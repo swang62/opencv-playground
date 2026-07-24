@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
+import base64
 import logging
 import threading
-import time
 import warnings
 
 warnings.filterwarnings("ignore", message=".*resource_tracker.*")
 
-from fastapi.responses import Response
 from nicegui import app as napp
 from nicegui import ui
 
@@ -27,19 +26,6 @@ pipeline: CapturePipeline | None = None
 device_str: str = "unknown"
 
 
-@napp.get("/frame.jpg")
-async def serve_frame():
-    """Return the latest annotated JPEG frame."""
-    if not state.models_ready:
-        return Response(status_code=503)
-    if pipeline is None:
-        return Response(status_code=503)
-    jpeg = pipeline.get_latest_encoded_frame()
-    if jpeg is None:
-        return Response(status_code=204)
-    return Response(content=jpeg, media_type="image/jpeg")
-
-
 @ui.page("/")
 def index():
     """Assemble the full page."""
@@ -49,6 +35,15 @@ def index():
     IWN = "items-center w-full no-wrap"
     CAP = "text-caption"
     GROW = "flex-grow"
+    current_search_status = ""
+    current_frame_jpeg: bytes | None = None
+
+    def set_search_status(text: str):
+        nonlocal current_search_status
+        if text == current_search_status:
+            return
+        current_search_status = text
+        search_status.set_text(text)
 
     # ---- page chrome --------------------------------------------------------
     ui.add_head_html("""
@@ -77,11 +72,11 @@ def index():
                     if tab == "Detect":
                         state.set_mode("everything")
                         state.submit_target("")
-                        search_status.set_text("")
+                        set_search_status("")
                     elif tab == "Face":
                         state.set_mode("face")
                         state.submit_target("")
-                        search_status.set_text("Face Mesh Active")
+                        set_search_status("Face Mesh Active")
                     else:
                         state.set_mode("find")
 
@@ -244,10 +239,16 @@ def index():
 
     # ---- Timer-driven refresh ------------------------------------------------
     def refresh_all():
-        cam.set_source(f"/frame.jpg?{int(time.time() * 1000)}")
+        nonlocal current_frame_jpeg
+        if pipeline is not None:
+            jpeg = pipeline.get_latest_encoded_frame()
+            if jpeg is not None and jpeg != current_frame_jpeg:
+                current_frame_jpeg = jpeg
+                encoded = base64.b64encode(jpeg).decode("ascii")
+                cam.set_source(f"data:image/jpeg;base64,{encoded}")
         update_search_status()
 
-    ui.timer(0.001, refresh_all)
+    ui.timer(1 / 30, refresh_all)
 
     # ---- Page-local helper closures -----------------------------------------
 
@@ -256,7 +257,7 @@ def index():
         target = normalize_query(raw)
         if target:
             state.submit_target(target)
-            search_status.set_text(f'Searching: "{target}"')
+            set_search_status(f'Searching: "{target}"')
             search_inp.value = ""
             if pipeline is not None:
                 pipeline.model.set_prompt(target)
@@ -265,11 +266,11 @@ def index():
 
     def update_search_status():
         if state.mode == "face":
-            search_status.set_text("Face Mesh Active")
+            set_search_status("Face Mesh Active")
         elif state.submitted_target:
-            search_status.set_text(f'Searching: "{state.submitted_target}"')
+            set_search_status(f'Searching: "{state.submitted_target}"')
         else:
-            search_status.set_text("")
+            set_search_status("")
 
 
 # ---- Lifecycle --------------------------------------------------------------
