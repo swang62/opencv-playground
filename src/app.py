@@ -16,7 +16,7 @@ from nicegui import ui
 from src import config
 from src.models import get_device, load_model_bundle
 from src.pipeline import CapturePipeline
-from src.state import AppState
+from src.state import COLOR_MAP, AppState, color_name_to_hex
 from src.utils import normalize_query
 
 logger = logging.getLogger(__name__)
@@ -63,7 +63,7 @@ def index():
         with ui.row().classes("w-full flex-wrap items-start"):
             # -- webcam (left on desktop, top on mobile) --
             with ui.column().classes("flex-1 min-w-0"):
-                ui.label("Real-time Object Detection").classes(
+                ui.label(config.TITLE).classes(
                     "text-h4 text-weight-bold text-center w-full q-mb-md"
                 )
                 cam = ui.interactive_image().classes("w-full border-1 rounded")
@@ -195,7 +195,7 @@ def index():
                                     state, "face_show_headpose"
                                 )
                             with ui.row().classes(IWN):
-                                ui.switch("Text labels").bind_value_to(
+                                ui.switch("Labels").bind_value_to(
                                     state, "face_show_labels"
                                 )
 
@@ -231,16 +231,8 @@ def index():
                             "text-bold q-ml-sm"
                         )
                     with ui.row().classes("items-center w-full no-wrap justify-evenly"):
-                        colors = [
-                            ("#ffffff", "#000000", "White"),
-                            ("#000000", "#ffffff", "Black"),
-                            ("#ff0000", "#ffffff", "Red"),
-                            ("#ffff00", "#000000", "Yellow"),
-                            ("#00ff00", "#000000", "Green"),
-                            ("#00ffff", "#000000", "Cyan"),
-                            ("#ff00ff", "#ffffff", "Magenta"),
-                        ]
-                        for bg, fg, name in colors:
+                        for name in COLOR_MAP:
+                            bg = color_name_to_hex(name)
                             ui.button(
                                 "",
                                 on_click=lambda n=name: setattr(

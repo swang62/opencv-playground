@@ -95,10 +95,15 @@ COLOR_MAP: dict[str, tuple[int, int, int]] = {
     "Red": (0, 0, 255),
     "Yellow": (0, 255, 255),
     "Green": (0, 255, 0),
-    "Blue": (255, 0, 0),
+    "Cyan": (255, 255, 0),
     "Magenta": (255, 0, 255),
 }
 
 
 def color_name_to_bgr(name: str) -> tuple[int, int, int]:
     return COLOR_MAP.get(name, (0, 255, 0))  # default green
+
+
+def color_name_to_hex(name: str) -> str:
+    bgr = color_name_to_bgr(name)
+    return f"#{bgr[2]:02x}{bgr[1]:02x}{bgr[0]:02x}"
