@@ -83,7 +83,6 @@ class ModelBundle:
             with self._promptfree_lock:
                 if self._promptfree is not None:
                     return self._promptfree
-                logger.info("Lazy-loading prompt-free model...")
                 m = YOLO(self._promptfree_path)
                 m.to(self.device)
                 warmup_model(m, self.device)
@@ -133,7 +132,11 @@ class ModelBundle:
     def predict(self, frame, mode: str, **kwargs):
         """Run inference through the model matching *mode*."""
         if mode == "face":
-            return self.face_engine.process(frame)
+            return self.face_engine.process(
+                frame,
+                show_headpose=kwargs.get("show_headpose", True),
+                show_labels=kwargs.get("show_labels", True),
+            )
         if mode == "find":
             return self.prompted.predict(frame, **kwargs)
         return self.promptfree.predict(frame, **kwargs)

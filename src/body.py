@@ -223,6 +223,18 @@ class BodyEngine:
         self.ensure_pose_loaded()
         self.ensure_hand_loaded()
 
+        dummy_frame = np.zeros((256, 256, 3), dtype=np.uint8)
+
+        try:
+            self.process_pose(dummy_frame)
+        except Exception as exc:
+            logger.warning("Pose warmup inference failed: %s", exc)
+
+        try:
+            self.process_hands(dummy_frame)
+        except Exception as exc:
+            logger.warning("Hand warmup inference failed: %s", exc)
+
     def ensure_pose_loaded(self):
         if self._pose is not None:
             return

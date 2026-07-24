@@ -159,6 +159,9 @@ class CapturePipeline:
 
             try:
                 kwargs = get_predict_kwargs(self.state)
+                if mode == "face":
+                    kwargs["show_headpose"] = self.state.face_show_headpose
+                    kwargs["show_labels"] = self.state.face_show_labels
                 results = self.model.predict(frame, mode, **kwargs)
                 consecutive_errors = 0
             except Exception as exc:
@@ -180,8 +183,6 @@ class CapturePipeline:
             if mode == "face":
                 detections = results  # already extracted dicts from FaceEngine
                 draw_frame = frame.copy()
-                if self.state.face_remove_background:
-                    draw_frame = self.model.face_engine.remove_background(draw_frame)
                 draw_frame = apply_visual_filter(
                     draw_frame,
                     self.state.visual_filter,

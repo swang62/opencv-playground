@@ -16,8 +16,6 @@ from mediapipe.tasks.python import vision
 from uniface.attribute import AgeGender
 from uniface.attribute.emotion import Emotion
 from uniface.headpose import HeadPose
-from uniface.constants import MODNetWeights
-from uniface.matting import MODNet
 from uniface.privacy import BlurFace
 from uniface.spoofing import MiniFASNet
 from uniface.types import AttributeResult
@@ -423,9 +421,6 @@ class FaceEngine:
         self._age_gender = None
         self._emotion = None
         self._spoofing = None
-        self._background_remover = None
-        self._bg_alpha_cache = None
-        self._bg_frame_counter = 0
         self._uniface_lock = threading.Lock()
         self._mediapipe_5pt = None
 
@@ -454,31 +449,61 @@ class FaceEngine:
 
     def warmup(self):
         self.ensure_loaded()
-        self._ensure_uniface()
+        self._ensure_uniface(
+            need_headpose=True,
+            need_labels=True,
+        )
 
-    def _ensure_uniface(self):
-        """Lazy-load UniFace attribute models."""
-        if self._headpose is not None:
-            return
-        with self._uniface_lock:
-            if self._headpose is not None:
-                return
+        dummy_frame = np.zeros((256, 256, 3), dtype=np.uint8)
+        dummy_bbox = (64, 64, 192, 192)
+        dummy_points = [
+            (96, 112),
+            (160, 112),
+            (128, 144),
+            (104, 176),
+            (152, 176),
+        ]
 
-            logger.info("Loading UniFace attribute models...")
-            self._headpose = HeadPose()  # type: ignore[no-untyped-call]
-            self._age_gender = AgeGender()  # type: ignore[no-untyped-call]
-            self._emotion = Emotion()  # type: ignore[no-untyped-call]
-            self._spoofing = MiniFASNet()  # type: ignore[no-untyped-call]
+        try:
+            self.process(dummy_frame, show_headpose=False, show_labels=False)
+        except Exception as exc:
+            logger.warning("Face landmarker warmup inference failed: %s", exc)
+
+        try:
+            self._estimate_headpose(dummy_frame[64:192, 64:192])
+        except Exception as exc:
+            logger.warning("Headpose warmup inference failed: %s", exc)
+
+        try:
+            self._predict_attributes(dummy_frame, dummy_bbox, dummy_points)
+        except Exception as exc:
+            logger.warning("Attribute warmup inference failed: %s", exc)
+
+        if self._spoofing is not None:
             try:
-                self._background_remover = MODNet(
-                    model_name=MODNetWeights.WEBCAM,
-                    input_size=192,
-                )  # type: ignore[no-untyped-call]
-                self._bg_alpha_cache = None
-                logger.info("Background remover loaded (webcam, 192px)")
-            except Exception:
-                logger.warning("Background remover init failed")
-            logger.info("UniFace models ready")
+                self._spoofing.predict(dummy_frame, list(dummy_bbox))  # pyright: ignore
+            except Exception as exc:
+                logger.warning("Spoofing warmup inference failed: %s", exc)
+
+    def _ensure_uniface(
+        self,
+        need_headpose: bool = False,
+        need_labels: bool = False,
+    ):
+        """Lazy-load only the UniFace models needed by enabled features."""
+        if need_headpose and self._headpose is None:
+            with self._uniface_lock:
+                if self._headpose is None:
+                    logger.info("Loading UniFace headpose model...")
+                    self._headpose = HeadPose()  # type: ignore[no-untyped-call]
+
+        if need_labels and self._age_gender is None:
+            with self._uniface_lock:
+                if self._age_gender is None:
+                    logger.info("Loading UniFace label models...")
+                    self._age_gender = AgeGender()  # type: ignore[no-untyped-call]
+                    self._emotion = Emotion()  # type: ignore[no-untyped-call]
+                    self._spoofing = MiniFASNet()  # type: ignore[no-untyped-call]
 
     def _estimate_headpose(self, face_crop):
         try:
@@ -526,37 +551,12 @@ class FaceEngine:
 
         return age, gender, emotion
 
-    def remove_background(self, frame: np.ndarray) -> np.ndarray:
-        """Replace background with white using MODNet alpha matting.
-
-        Runs inference on a downscaled frame (2x smaller) for speed
-        and caches the alpha matte for 5 frames.
-        """
-        if self._background_remover is None:
-            return frame
-        try:
-            self._bg_frame_counter += 1
-            if self._bg_alpha_cache is not None and self._bg_frame_counter % 2 != 0:
-                alpha = self._bg_alpha_cache
-            else:
-                h, w = frame.shape[:2]
-                small = cv2.resize(
-                    frame, (w // 2, h // 2), interpolation=cv2.INTER_LINEAR
-                )
-                alpha_small = self._background_remover.predict(small)  # pyright: ignore
-                self._bg_alpha_cache = cv2.resize(
-                    alpha_small,
-                    (w, h),
-                    interpolation=cv2.INTER_LINEAR,
-                )
-                alpha = self._bg_alpha_cache
-            return (frame * alpha[..., None] + 255 * (1 - alpha[..., None])).astype(
-                np.uint8
-            )
-        except Exception:
-            return frame
-
-    def process(self, frame: np.ndarray):
+    def process(
+        self,
+        frame: np.ndarray,
+        show_headpose: bool = True,
+        show_labels: bool = True,
+    ):
         """Run face landmark detection on *frame*.
 
         Returns a list of dicts, one per detected face::
@@ -589,7 +589,10 @@ class FaceEngine:
         if not result.face_landmarks:
             return faces
 
-        self._ensure_uniface()
+        self._ensure_uniface(
+            need_headpose=show_headpose,
+            need_labels=show_labels,
+        )
 
         h, w = frame.shape[:2]
         for landmarks in result.face_landmarks:
@@ -607,7 +610,7 @@ class FaceEngine:
                 "landmarks": pts,
             }
 
-            if self._headpose is not None and x2 > x1 and y2 > y1:
+            if show_headpose and self._headpose is not None and x2 > x1 and y2 > y1:
                 face_crop = frame[y1:y2, x1:x2]
                 if face_crop.size > 0:
                     hp = self._estimate_headpose(face_crop)
@@ -615,7 +618,8 @@ class FaceEngine:
                         face_dict["headpose"] = hp  # pyright: ignore
 
             if (
-                self._age_gender is not None
+                show_labels
+                and self._age_gender is not None
                 and self._emotion is not None
                 and x2 > x1
                 and y2 > y1
@@ -645,7 +649,7 @@ class FaceEngine:
                 if emotion is not None:
                     face_dict["emotion"] = emotion
 
-            if self._spoofing is not None and x2 > x1 and y2 > y1:
+            if show_labels and self._spoofing is not None and x2 > x1 and y2 > y1:
                 try:
                     sr = self._spoofing.predict(frame, [x1, y1, x2, y2])  # pyright: ignore
                     face_dict["spoof_real"] = sr.is_real

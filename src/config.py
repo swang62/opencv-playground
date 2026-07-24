@@ -14,7 +14,7 @@ CAMERA_INDEX = 0
 # Server
 HOST = "127.0.0.1"
 PORT = 8765
-TITLE = "Object Finder"
+TITLE = "Object Detection"
 
 # UI defaults
 DEFAULT_CONFIDENCE = 0.2
