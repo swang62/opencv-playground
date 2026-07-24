@@ -9,6 +9,8 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from src import config
+
 logger = logging.getLogger(__name__)
 
 MODEL_DIR = Path("models")
@@ -24,51 +26,51 @@ MODEL_URL = (
 # Grouped by facial feature for a clean wireframe overlay.
 # ---------------------------------------------------------------------------
 
-_FACE_OVAL = [
+FACE_OVAL = [
     10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288, 397, 365,
     379, 378, 400, 377, 152, 148, 176, 149, 150, 136, 172, 58, 132, 93,
     234, 127, 162, 21, 54, 103, 67, 109, 10,
 ]
 
-_LEFT_EYE = [
+LEFT_EYE = [
     33, 7, 163, 144, 145, 153, 154, 155, 133, 173, 157, 158, 159, 160,
     161, 246, 33,
 ]
 
-_RIGHT_EYE = [
+RIGHT_EYE = [
     362, 382, 381, 380, 374, 373, 390, 249, 263, 466, 388, 387, 386, 385,
     384, 398, 362,
 ]
 
-_LEFT_BROW = [46, 53, 52, 65, 55, 70, 63, 105, 66, 107]
-_RIGHT_BROW = [276, 283, 282, 295, 285, 300, 293, 334, 296, 336]
+LEFT_BROW = [46, 53, 52, 65, 55, 70, 63, 105, 66, 107]
+RIGHT_BROW = [276, 283, 282, 295, 285, 300, 293, 334, 296, 336]
 
-_NOSE_BRIDGE = [168, 6, 197, 195, 5, 4, 45]
-_NOSE_BOTTOM = [2, 97, 98, 327, 326, 45]
+NOSE_BRIDGE = [168, 6, 197, 195, 5, 4, 45]
+NOSE_BOTTOM = [2, 97, 98, 327, 326, 45]
 
-_LIPS_OUTER = [
+LIPS_OUTER = [
     61, 146, 91, 181, 84, 17, 314, 405, 321, 375, 291, 409, 270, 269, 267,
     0, 37, 39, 40, 185, 61,
 ]
 
-_LIPS_INNER = [
+LIPS_INNER = [
     78, 191, 80, 81, 82, 13, 312, 311, 310, 415, 308, 324, 318, 402, 317,
     14, 87, 178, 88, 95, 78,
 ]
 
-_ALL_CONTOURS = [
-    _FACE_OVAL, _LEFT_EYE, _RIGHT_EYE, _LEFT_BROW, _RIGHT_BROW,
-    _NOSE_BRIDGE, _NOSE_BOTTOM, _LIPS_OUTER, _LIPS_INNER,
+ALL_CONTOURS = [
+    FACE_OVAL, LEFT_EYE, RIGHT_EYE, LEFT_BROW, RIGHT_BROW,
+    NOSE_BRIDGE, NOSE_BOTTOM, LIPS_OUTER, LIPS_INNER,
 ]
 
 # Build flattened list of (i, j) index pairs for OpenCV polylines.
-_FACE_CONNECTIONS: list[np.ndarray] = []
-for contour in _ALL_CONTOURS:
+FACE_CONNECTIONS: list[np.ndarray] = []
+for contour in ALL_CONTOURS:
     pts = np.array(contour, dtype=np.int32).reshape(-1, 1, 1)
-    _FACE_CONNECTIONS.append(pts)
+    FACE_CONNECTIONS.append(pts)
 
 
-def _download_model() -> Path:
+def download_model() -> Path:
     """Download Face Landmarker model if not cached, return path."""
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
     if MODEL_FILE.exists():
@@ -93,34 +95,28 @@ def _download_model() -> Path:
 # Face drawing helpers
 # ---------------------------------------------------------------------------
 
-_FPS_COLOR = (0, 255, 0)  # green
-
-# Per-contour colors in BGR. Order matches _ALL_CONTOURS.
-_CONTOUR_COLORS = [
-    (0, 255, 0),          # _FACE_OVAL - pure green outline
-    (255, 255, 0),        # _LEFT_EYE - cyan
-    (255, 255, 0),        # _RIGHT_EYE - cyan
-    (0, 255, 100),        # _LEFT_BROW - warm green
-    (0, 255, 100),        # _RIGHT_BROW - warm green
-    (100, 255, 0),        # _NOSE_BRIDGE - yellow-green
-    (100, 255, 0),        # _NOSE_BOTTOM - yellow-green
-    (0, 150, 255),        # _LIPS_OUTER - orange
-    (0, 150, 255),        # _LIPS_INNER - orange
+# Per-contour colors in BGR. Order matches ALL_CONTOURS.
+CONTOUR_COLORS = [
+    (0, 255, 0),          # FACE_OVAL - pure green outline
+    (255, 255, 0),        # LEFT_EYE - cyan
+    (255, 255, 0),        # RIGHT_EYE - cyan
+    (0, 255, 100),        # LEFT_BROW - warm green
+    (0, 255, 100),        # RIGHT_BROW - warm green
+    (100, 255, 0),        # NOSE_BRIDGE - yellow-green
+    (100, 255, 0),        # NOSE_BOTTOM - yellow-green
+    (0, 150, 255),        # LIPS_OUTER - orange
+    (0, 150, 255),        # LIPS_INNER - orange
 ]
 
 # Precompute a color per landmark index (0-477) based on contour membership.
-_LANDMARK_COLORS: list[tuple[int, int, int]] = []
+LANDMARK_COLORS: list[tuple[int, int, int]] = []
 for i in range(478):
-    _c = (0, 200, 0)  # default medium green
-    for ci, contour in enumerate(_ALL_CONTOURS):
+    color = (0, 200, 0)  # default medium green
+    for ci, contour in enumerate(ALL_CONTOURS):
         if i in contour:
-            _c = _CONTOUR_COLORS[ci]
+            color = CONTOUR_COLORS[ci]
             break
-    _LANDMARK_COLORS.append(_c)
-
-
-# Only draw every Nth point to keep the overlay clean (and fast).
-_POINT_STRIDE = 4
+    LANDMARK_COLORS.append(color)
 
 
 def draw_face_mesh(frame: np.ndarray, faces, fps: float) -> np.ndarray:
@@ -144,8 +140,8 @@ def draw_face_mesh(frame: np.ndarray, faces, fps: float) -> np.ndarray:
         pts = face["landmarks"]
 
         # -- wireframe connections (per-contour colors) --
-        for ci, conn in enumerate(_FACE_CONNECTIONS):
-            color = _CONTOUR_COLORS[ci]
+        for ci, conn in enumerate(FACE_CONNECTIONS):
+            color = CONTOUR_COLORS[ci]
             pixel_pts = np.array(
                 [(pts[i][0], pts[i][1]) for i in conn.flatten() if i < len(pts)],
                 dtype=np.int32,
@@ -153,16 +149,16 @@ def draw_face_mesh(frame: np.ndarray, faces, fps: float) -> np.ndarray:
             cv2.polylines(frame, [pixel_pts], isClosed=False, color=color, thickness=2)
 
         # -- landmark dots (colored by feature) --
-        for i in range(0, len(pts), _POINT_STRIDE):
+        for i in range(0, len(pts), config.FACE_POINT_STRIDE):
             cv2.circle(
                 frame, (pts[i][0], pts[i][1]), 2,
-                _LANDMARK_COLORS[i], -1, lineType=cv2.LINE_AA,
+                LANDMARK_COLORS[i], -1, lineType=cv2.LINE_AA,
             )
 
     # -- FPS overlay --
     cv2.putText(
         frame, f"FPS: {fps:.1f}", (10, 30),
-        cv2.FONT_HERSHEY_SIMPLEX, 1, _FPS_COLOR, 2,
+        cv2.FONT_HERSHEY_SIMPLEX, 1, config.FRAMES_PER_SECOND_COLOR, 2,
     )
 
     return frame
@@ -185,14 +181,14 @@ class FaceEngine:
         self._lock = threading.Lock()
         self._frame_count = 0
 
-    def _ensure_loaded(self):
+    def ensure_loaded(self):
         if self._landmarker is not None:
             return
         with self._lock:
             if self._landmarker is not None:
                 return
 
-            model_path = _download_model()
+            model_path = download_model()
 
             from mediapipe.tasks import python
             from mediapipe.tasks.python import vision
@@ -243,8 +239,8 @@ class FaceEngine:
 
         Returns an empty list when no face is detected.
         """
-        self._ensure_loaded()
-        assert self._landmarker is not None  # _ensure_loaded guarantees this
+        self.ensure_loaded()
+        assert self._landmarker is not None  # ensure_loaded guarantees this
 
         self._frame_count += 1
         timestamp_ms = self._frame_count * 33  # ~30 FPS pacing

@@ -1,7 +1,7 @@
 import re
 
 # Common question wrappers and command prefixes to strip from input.
-_WRAPPER_PATTERNS = [
+WRAPPER_PATTERNS = [
     r"where\s+is\b",
     r"where\s+are\b",
     r"where'?s\b",
@@ -23,7 +23,7 @@ _WRAPPER_PATTERNS = [
     r"i\s+need\b",
 ]
 
-_FILLER_WORDS_RE = re.compile(r"\b(a|an|the|my|your|some)\b", re.IGNORECASE)
+FILLER_WORDS_RE = re.compile(r"\b(a|an|the|my|your|some)\b", re.IGNORECASE)
 
 
 def normalize_query(raw: str) -> str | None:
@@ -38,10 +38,10 @@ def normalize_query(raw: str) -> str | None:
     if not text:
         return None
 
-    for pattern in _WRAPPER_PATTERNS:
+    for pattern in WRAPPER_PATTERNS:
         text = re.sub(pattern, "", text, flags=re.IGNORECASE)
 
-    text = _FILLER_WORDS_RE.sub("", text)
+    text = FILLER_WORDS_RE.sub("", text)
     text = re.sub(r"[^\w\s-]", "", text)  # remove punctuation, keep hyphens
     text = re.sub(r"\s+", " ", text).strip()
 

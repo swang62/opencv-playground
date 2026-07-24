@@ -8,28 +8,28 @@ import threading
 import cv2
 import numpy as np
 
-_IS_MACOS = platform.system() == "Darwin"
+IS_MACOS = platform.system() == "Darwin"
 
 # ---- macOS native camera (AVFoundation via pyobjc) --------------------------
 
-_HAVE_NATIVE_CAMERA = False
+HAVE_NATIVE_CAMERA = False
 
-if _IS_MACOS:
+if IS_MACOS:
     try:
-        import AVFoundation as _AV
-        import CoreMedia as _CM
-        import CoreVideo as _CV
-        import Foundation as _FN
-        from objc import super as _objc_super
+        import AVFoundation as AV
+        import CoreMedia as CM
+        import CoreVideo as CV
+        import Foundation as FN
+        from objc import super as objc_super
 
-        _HAVE_NATIVE_CAMERA = True
+        HAVE_NATIVE_CAMERA = True
     except ImportError:
         pass
 
 
-if _HAVE_NATIVE_CAMERA:
+if HAVE_NATIVE_CAMERA:
 
-    class _FrameReceiver(_FN.NSObject):
+    class FrameReceiver(FN.NSObject):
         """Receives camera frames from AVFoundation on a serial queue.
 
         Implements the AVCaptureVideoDataOutputSampleBufferDelegate
@@ -37,24 +37,24 @@ if _HAVE_NATIVE_CAMERA:
         """
 
         def init(self):
-            self = _objc_super().init()
+            self = objc_super().init()
             self._lock = threading.Lock()
-            self._frame: np.ndarray | None = None
+            self._current_frame: np.ndarray | None = None
             return self
 
         def captureOutput_didOutputSampleBuffer_fromConnection_(
             self, output, sample_buffer, connection
         ):
-            image_buffer = _CM.CMSampleBufferGetImageBuffer(sample_buffer)
+            image_buffer = CM.CMSampleBufferGetImageBuffer(sample_buffer)
             if image_buffer is None:
                 return
 
-            _CV.CVPixelBufferLockBaseAddress(image_buffer, 0)
+            CV.CVPixelBufferLockBaseAddress(image_buffer, 0)
             try:
-                w = _CV.CVPixelBufferGetWidth(image_buffer)
-                h = _CV.CVPixelBufferGetHeight(image_buffer)
-                bpr = _CV.CVPixelBufferGetBytesPerRow(image_buffer)
-                addr = _CV.CVPixelBufferGetBaseAddress(image_buffer)
+                w = CV.CVPixelBufferGetWidth(image_buffer)
+                h = CV.CVPixelBufferGetHeight(image_buffer)
+                bpr = CV.CVPixelBufferGetBytesPerRow(image_buffer)
+                addr = CV.CVPixelBufferGetBaseAddress(image_buffer)
 
                 import ctypes
 
@@ -63,16 +63,16 @@ if _HAVE_NATIVE_CAMERA:
                 # BGRA -> BGR, crop to actual visible width
                 frame = arr[:, :w, :3].copy()
             finally:
-                _CV.CVPixelBufferUnlockBaseAddress(image_buffer, 0)
+                CV.CVPixelBufferUnlockBaseAddress(image_buffer, 0)
 
             with self._lock:
-                self._frame = frame
+                self._current_frame = frame
 
         def get_frame(self) -> np.ndarray | None:
             with self._lock:
-                if self._frame is None:
+                if self._current_frame is None:
                     return None
-                return self._frame.copy()
+                return self._current_frame.copy()
 
     class NativeMacCamera:
         """macOS-native camera backed by AVFoundation.
@@ -81,34 +81,34 @@ if _HAVE_NATIVE_CAMERA:
         deadlock the Window Server on macOS.
         """
 
-        def __init__(self, camera_id: int = 0):
-            self._camera_id = camera_id
-            self._session: _AV.AVCaptureSession | None = None
-            self._receiver: _FrameReceiver | None = None
+        def __init__(self, camera_index: int = 0):
+            self._camera_index = camera_index
+            self._session: AV.AVCaptureSession | None = None
+            self._receiver: FrameReceiver | None = None
 
         def start(self):
-            self._receiver = _FrameReceiver.alloc().init()
+            self._receiver = FrameReceiver.alloc().init()
 
-            devices = _AV.AVCaptureDevice.devicesWithMediaType_("vide")
-            if not devices or self._camera_id >= len(devices):
-                raise RuntimeError(f"Camera {self._camera_id} not found")
-            device = devices[self._camera_id]
+            devices = AV.AVCaptureDevice.devicesWithMediaType_("vide")
+            if not devices or self._camera_index >= len(devices):
+                raise RuntimeError(f"Camera {self._camera_index} not found")
+            device = devices[self._camera_index]
 
-            input_obj, error = _AV.AVCaptureDeviceInput.deviceInputWithDevice_error_(
+            input_obj, error = AV.AVCaptureDeviceInput.deviceInputWithDevice_error_(
                 device, None
             )
             if error is not None:
                 raise RuntimeError(f"Camera input error: {error}")
 
-            output = _AV.AVCaptureVideoDataOutput.alloc().init()
+            output = AV.AVCaptureVideoDataOutput.alloc().init()
             output.setVideoSettings_(
-                {_CV.kCVPixelBufferPixelFormatTypeKey: _CV.kCVPixelFormatType_32BGRA}
+                {CV.kCVPixelBufferPixelFormatTypeKey: CV.kCVPixelFormatType_32BGRA}
             )
-            queue = _FN.dispatch_queue_create("camera-capture", None)
+            queue = FN.dispatch_queue_create("camera-capture", None)
             output.setSampleBufferDelegate_queue_(self._receiver, queue)
 
-            self._session = _AV.AVCaptureSession.alloc().init()
-            self._session.setSessionPreset_(_AV.AVCaptureSessionPreset1280x720)
+            self._session = AV.AVCaptureSession.alloc().init()
+            self._session.setSessionPreset_(AV.AVCaptureSessionPreset1280x720)
             self._session.addInput_(input_obj)
             self._session.addOutput_(output)
             self._session.startRunning()
@@ -143,7 +143,7 @@ def create_camera(camera_id: int):
     On macOS with pyobjc available uses NativeMacCamera to avoid the
     OpenCV AVFoundation deadlock. Falls back to cv2.VideoCapture.
     """
-    if _HAVE_NATIVE_CAMERA:
+    if HAVE_NATIVE_CAMERA:
         cam = NativeMacCamera(camera_id)
         cam.start()
         return cam

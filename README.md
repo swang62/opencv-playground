@@ -14,8 +14,9 @@ uv run python main.py # http://127.0.0.1:8080
 
 ## Modes
 
-- **Find** — Enter a natural-language query to search for anything in the webcam feed. Ideally search for things like **adjective** + **noun** (e.g. "red apple").
-- **Everything** — Uses the prompt-free model to detect all objects in the webcam feed. You can control the top K items and confidence threshold.
+- **Find** — Enter a natural-language query to search for any object in the webcam feed. Ideally search for **adjective** + **noun** (e.g. "red apple").
+- **Detect** — Uses the prompt-free model to detect all objects in the webcam feed. Control with top K items and confidence threshold.
+- **Face** — 478-point face mesh overlay
 
 ## Troubleshooting
 

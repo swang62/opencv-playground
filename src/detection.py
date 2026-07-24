@@ -8,7 +8,7 @@ import numpy as np
 from src import config
 
 # Pre-allocated green overlay reused across annotate_frame calls.
-_green_buf: np.ndarray | None = None
+green_buf: np.ndarray | None = None
 
 
 def extract_detections(results, confidence: float, need_masks: bool = True):
@@ -41,9 +41,7 @@ def extract_detections(results, confidence: float, need_masks: bool = True):
         det = {"label": label, "confidence": conf, "mask": None}
 
         if masks_attr is not None:
-            bbox = tuple(float(v) for v in boxes.xyxy[i])
-            det["bbox"] = bbox
-
+            det["bbox"] = tuple(float(v) for v in boxes.xyxy[i])
             mask_tensor = masks_attr.data[i]
             if hasattr(mask_tensor, "cpu"):
                 det["mask"] = mask_tensor.cpu().numpy()
@@ -57,36 +55,35 @@ def extract_detections(results, confidence: float, need_masks: bool = True):
     return detections
 
 
-def annotate_frame(frame, detections, fps: float, hidden_labels, mode: str = "find"):
+def annotate_frame(frame, detections, fps: float, mode: str = "find"):
     """Draw boxes, masks, and labels on a copy of *frame*.
 
     In ``"everything"`` mode: bounding boxes with labels.
     In ``"find"`` mode: green mask overlay with label at bbox center.
-    Detections whose label appears in hidden_labels are skipped.
     """
-    global _green_buf
+    global green_buf
 
     annotated = frame.copy()
     h, w = frame.shape[:2]
 
     if mode == "everything":
         for det in detections:
-            if det["label"] in hidden_labels:
-                continue
             x1, y1, x2, y2 = map(int, det["bbox"])
-            cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 255, 0), 2)
+            cv2.rectangle(
+                annotated, (x1, y1), (x2, y2),
+                config.BOUNDING_BOX_COLOR, 2,
+            )
             cv2.putText(
                 annotated, det["label"], (x1, y1 - 6),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                config.LABEL_FONT_SCALE, (0, 255, 0), config.LABEL_FONT_THICKNESS,
+                config.LABEL_FONT_SCALE, config.LABEL_COLOR,
+                config.LABEL_FONT_THICKNESS,
             )
     else:
-        if _green_buf is None or _green_buf.shape[:2] != (h, w):
-            _green_buf = np.zeros((h, w, 3), dtype=np.uint8)
+        if green_buf is None or green_buf.shape[:2] != (h, w):
+            green_buf = np.zeros((h, w, 3), dtype=np.uint8)
 
         for det in detections:
-            if det["label"] in hidden_labels:
-                continue
             mask = det.get("mask")
             x1, y1, x2, y2 = map(int, det["bbox"])
 
@@ -94,20 +91,23 @@ def annotate_frame(frame, detections, fps: float, hidden_labels, mode: str = "fi
                 mask_rz = cv2.resize(
                     mask.astype(np.float32), (w, h), interpolation=cv2.INTER_NEAREST
                 )
-                _green_buf.fill(0)
-                _green_buf[mask_rz > 0.25] = (0, 200, 0)
-                annotated = cv2.addWeighted(annotated, 0.9, _green_buf, 0.2, 0)
+                green_buf.fill(0)
+                green_buf[mask_rz > 0.25] = (0, 200, 0)
+                annotated = cv2.addWeighted(annotated, 0.9, green_buf, 0.2, 0)
 
             cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
             cv2.putText(
                 annotated, det["label"], (cx, cy),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                config.LABEL_FONT_SCALE, (0, 255, 0), config.LABEL_FONT_THICKNESS,
+                config.LABEL_FONT_SCALE, config.LABEL_COLOR,
+                config.LABEL_FONT_THICKNESS,
             )
 
     cv2.putText(
         annotated, f"FPS: {fps:.1f}", (10, 30),
         cv2.FONT_HERSHEY_SIMPLEX,
-        config.FPS_FONT_SCALE, (0, 255, 0), config.FPS_FONT_THICKNESS,
+        config.FRAMES_PER_SECOND_FONT_SCALE,
+        config.FRAMES_PER_SECOND_COLOR,
+        config.FRAMES_PER_SECOND_FONT_THICKNESS,
     )
     return annotated

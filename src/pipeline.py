@@ -40,15 +40,14 @@ class CapturePipeline:
         self.model = model
         self.state = state
         self._camera_input = camera
-        self._cap = None
+        self._camera = None
         self._latest_frame = None
-        self._latest_jpeg = None
+        self._latest_encoded_frame = None
         self._frame_lock = threading.Lock()
         self._result_lock = threading.Lock()
         self._capture_thread: threading.Thread | None = None
         self._inference_thread: threading.Thread | None = None
         self.error: str | None = None
-        self._last_labels: dict[str, tuple[int, float]] = {}
 
     def start(self):
         """Open the camera and start capture / inference threads."""
@@ -73,14 +72,16 @@ class CapturePipeline:
                 self.state.set_camera_ready(False)
                 return
 
-        self._cap = cap
+        self._camera = cap
         self.state.set_camera_ready(True)
         self.state.set_camera_error(None)
         logger.info("Camera opened successfully")
 
-        self._capture_thread = threading.Thread(target=self._capture_loop, daemon=True)
+        self._capture_thread = threading.Thread(
+            target=self.capture_loop, daemon=True
+        )
         self._inference_thread = threading.Thread(
-            target=self._inference_loop, daemon=True
+            target=self.inference_loop, daemon=True
         )
         self._capture_thread.start()
         self._inference_thread.start()
@@ -96,17 +97,17 @@ class CapturePipeline:
         if self._inference_thread is not None:
             self._inference_thread.join(timeout=5)
 
-        if self._cap is not None:
-            self._cap.release()
+        if self._camera is not None:
+            self._camera.release()
             logger.info("Camera released")
 
-    def get_latest_jpeg(self) -> bytes | None:
-        """Return the most recent annotated JPEG, or None."""
+    def get_latest_encoded_frame(self) -> bytes | None:
+        """Return the most recent annotated image bytes, or None."""
         with self._result_lock:
-            return self._latest_jpeg
+            return self._latest_encoded_frame
 
-    def _capture_loop(self):
-        cap = self._cap
+    def capture_loop(self):
+        cap = self._camera
         if cap is None:
             return
         logger.info("Capture loop started")
@@ -123,7 +124,7 @@ class CapturePipeline:
                 self._latest_frame = cv2.flip(frame, 1)  # pyright: ignore[reportArgumentType, reportCallIssue]
         logger.info("Capture loop ended")
 
-    def _inference_loop(self):
+    def inference_loop(self):
         logger.info("Inference loop started")
         consecutive_errors = 0
         while not self.state.shutdown:
@@ -157,18 +158,14 @@ class CapturePipeline:
                 time.sleep(0.1)
                 continue
 
-            conf = self.state.confidence
-            hidden = self.state.hidden_labels
-
             if mode == "face":
                 detections = results  # already extracted dicts from FaceEngine
-                self.state.update_latest_labels(
-                    {f"Face {i + 1}": (1, 0.95) for i in range(len(detections))}
+                annotated = draw_face_mesh(
+                    frame.copy(), detections, self.state.frames_per_second
                 )
-                annotated = draw_face_mesh(frame.copy(), detections, self.state.fps)
             else:
                 detections = extract_detections(
-                    results, conf, need_masks=(mode == "find")
+                    results, self.state.confidence, need_masks=(mode == "find")
                 )
 
                 if mode == "everything":
@@ -183,25 +180,16 @@ class CapturePipeline:
                     )
                     detections = [d for d in detections if d["label"] in top_n]
 
-                label_info: dict[str, tuple[int, float]] = {}
-                for d in detections:
-                    lbl = d["label"]
-                    cnt, best = label_info.get(lbl, (0, 0.0))
-                    label_info[lbl] = (cnt + 1, max(best, d["confidence"]))
-                if label_info != self._last_labels:
-                    self._last_labels = label_info
-                    self.state.update_latest_labels(label_info)
-
                 annotated = annotate_frame(
-                    frame, detections, self.state.fps, hidden, mode
+                    frame, detections, self.state.frames_per_second, mode
                 )
 
             elapsed = time.perf_counter() - t0
             new_fps = 1.0 / elapsed if elapsed > 0 else 0.0
-            self.state.update_fps(new_fps)
+            self.state.update_frames_per_second(new_fps)
 
             success, jpeg = cv2.imencode(".jpg", annotated)
             if success:
                 with self._result_lock:
-                    self._latest_jpeg = jpeg.tobytes()
+                    self._latest_encoded_frame = jpeg.tobytes()
         logger.info("Inference loop ended")

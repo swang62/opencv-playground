@@ -12,7 +12,7 @@ from src import config
 logger = logging.getLogger(__name__)
 
 # Text encoder shared across all ModelBundle instances (one is enough).
-_text_encoder = None
+text_encoder = None
 
 
 def get_device() -> str:
@@ -30,24 +30,24 @@ def warmup_model(model, device: str):
     model.predict(dummy, verbose=False)
 
 
-def _get_text_encoder():
+def get_text_encoder():
     """Return the shared MobileCLIPTS text encoder, built once on CPU."""
-    global _text_encoder
-    if _text_encoder is None:
+    global text_encoder
+    if text_encoder is None:
         from ultralytics.nn.text_model import MobileCLIPTS
 
-        _text_encoder = MobileCLIPTS(
+        text_encoder = MobileCLIPTS(
             torch.device("cpu"), weight="models/mobileclip2_b.ts"
         )
-    return _text_encoder
+    return text_encoder
 
 
-def _encode_text(texts: list[str]) -> torch.Tensor:
+def encode_text(texts: list[str]) -> torch.Tensor:
     """Encode text on CPU, return (1, N, 512) tensor on MPS.
 
     Avoids MPS shader compilation overhead on the text encoder.
     """
-    enc = _get_text_encoder()
+    enc = get_text_encoder()
     tokens = enc.tokenize(texts)
     txt_feats = enc.encode_text(tokens).detach().cpu()
     # Shape: (N, 512) -> (1, N, 512)
@@ -62,15 +62,14 @@ class ModelBundle:
     thereafter.
     """
 
-    def __init__(self, prompted, promptfree_path: str, device: str, state=None):
+    def __init__(self, prompted, promptfree_path: str, device: str):
         self.prompted = prompted
         self._promptfree = None
         self._promptfree_path = promptfree_path
         self._promptfree_lock = threading.Lock()
         self.device = device
-        self._state = state
         self._last_target: str = ""
-        self._tpe_cache: dict[str, torch.Tensor] = {}
+        self._text_prompt_embedding_cache: dict[str, torch.Tensor] = {}
 
     _prompt_thread: threading.Thread | None = None
     _prompt_pending: str = ""
@@ -98,32 +97,28 @@ class ModelBundle:
         """Set a new text prompt, using cached embeddings if available."""
         if not target or target == self._last_target:
             return
-        cached = self._tpe_cache.get(target)
+        cached = self._text_prompt_embedding_cache.get(target)
         if cached is not None:
             self.prompted.set_classes([target], embeddings=cached)
             self._last_target = target
             return
         self._prompt_pending = target
-        if self._state is not None:
-            self._state.prompt_busy = True
         if self._prompt_thread is None or not self._prompt_thread.is_alive():
             self._prompt_thread = threading.Thread(
-                target=self._do_set_prompt, daemon=True
+                target=self.do_set_prompt, daemon=True
             )
             self._prompt_thread.start()
 
-    def _do_set_prompt(self):
+    def do_set_prompt(self):
         target = self._prompt_pending
         # Encode text to raw embeddings on CPU.
-        raw = _encode_text([target]).to(self.device)
+        raw = encode_text([target]).to(self.device)
         # Run through the YOLOE head to get final tpe.
         head = self.prompted.model.model[-1]
         tpe = head.get_tpe(raw)
-        self._tpe_cache[target] = tpe
+        self._text_prompt_embedding_cache[target] = tpe
         self.prompted.set_classes([target], embeddings=tpe)
         self._last_target = target
-        if self._state is not None:
-            self._state.prompt_busy = False
 
     @property
     def face_engine(self):
@@ -152,10 +147,10 @@ class ModelBundle:
         warmup_model(self.prompted, self.device)
         logger.info("Pre-loading text encoder (mobileclip2) on CPU...")
         try:
-            raw = _encode_text(["dummy"]).to(self.device)
+            raw = encode_text(["dummy"]).to(self.device)
             head = self.prompted.model.model[-1]
             tpe = head.get_tpe(raw)
-            self._tpe_cache["dummy"] = tpe
+            self._text_prompt_embedding_cache["dummy"] = tpe
             self.prompted.set_classes(["dummy"], embeddings=tpe)
             self._last_target = "dummy"
             logger.info("Text encoder ready")
@@ -165,7 +160,7 @@ class ModelBundle:
 
 
 def load_model_bundle(
-    prompted_path: str, promptfree_path: str, state=None
+    prompted_path: str, promptfree_path: str
 ) -> ModelBundle:
     """Load the prompted checkpoint, move to device, warm up, and return a bundle.
 
@@ -181,6 +176,6 @@ def load_model_bundle(
     prompted = YOLO(prompted_path)
     prompted.to(device)
 
-    bundle = ModelBundle(prompted, promptfree_path, device, state)
+    bundle = ModelBundle(prompted, promptfree_path, device)
     bundle.warmup()
     return bundle
