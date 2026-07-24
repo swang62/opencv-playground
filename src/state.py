@@ -22,6 +22,13 @@ class AppState:
     camera_error: str | None = None
     frames_per_second: float = 0.0
     shutdown: bool = False
+    face_show_wireframe: bool = True
+    face_show_headpose: bool = True
+    face_show_labels: bool = True
+    face_show_fake_detection: bool = True
+    face_remove_background: bool = False
+    privacy_mode: str = "None"
+    visual_filter: str = "None"
 
     _lock: threading.Lock = field(
         default_factory=threading.Lock, repr=False, compare=False

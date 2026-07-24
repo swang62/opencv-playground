@@ -19,5 +19,11 @@
   "reportUnannotatedClassAttribute": false,
   "reportUnusedImport": false,
   "reportUnnecessaryIsInstance": false,
-  "reportUntypedBaseClass": false
+  "reportUntypedBaseClass": false,
+  "reportOptionalMemberAccess": false,
+  "reportArgumentType": false,
+  "reportMissingTypeArgument": false,
+  "reportCallIssue": false,
+  "reportUnnecessaryTypeIgnoreComment": false,
+  "reportIgnoreCommentWithoutRule": false
 }

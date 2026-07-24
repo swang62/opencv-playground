@@ -73,8 +73,9 @@ def annotate_frame(frame, detections, fps: float, mode: str = "find"):
                 annotated, (x1, y1), (x2, y2),
                 config.BOUNDING_BOX_COLOR, 2,
             )
+            conf_pct = int(det["confidence"] * 100)
             cv2.putText(
-                annotated, det["label"], (x1, y1 - 6),
+                annotated, f"{det['label']} ({conf_pct}%)", (x1, y1 - 6),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 config.LABEL_FONT_SCALE, config.LABEL_COLOR,
                 config.LABEL_FONT_THICKNESS,

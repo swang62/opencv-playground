@@ -1,8 +1,9 @@
 """Application configuration — all user-facing constants in one place."""
 
 # Model paths (relative to project root)
-PROMPTED_MODEL = "models/yoloe-26s-seg.pt"
-PROMPTFREE_MODEL = "models/yoloe-26s-seg-pf.pt"
+MODELS_DIR = "models"
+PROMPTED_MODEL = f"{MODELS_DIR}/yoloe-26m-seg.pt"
+PROMPTFREE_MODEL = f"{MODELS_DIR}/yoloe-26m-seg-pf.pt"
 
 # Inference size (pixels, squared). Lower = faster, less sensitive to small objects.
 INFERENCE_SIZE = 480

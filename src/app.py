@@ -5,6 +5,9 @@ from __future__ import annotations
 import logging
 import threading
 import time
+import warnings
+
+warnings.filterwarnings("ignore", message=".*resource_tracker.*")
 
 from fastapi.responses import Response
 from nicegui import app as napp
@@ -57,13 +60,14 @@ def index():
     </style>
     """)
 
-    with ui.element("div").classes(FW).style("max-width: 95%; margin: 0 auto;"):
+    with ui.element("div").classes(FW).style("max-width: 95%; margin: 24px auto;"):
         with ui.row().classes("w-full no-wrap"):
             # -- left column: controls --
             with ui.column().classes("col-12 col-md-3"):
-                ui.label("Real-time Object Detection").classes(
+                ui.label("Real-time object detection").classes(
                     "text-h4 text-weight-bold q-mt-md q-mb-md"
                 )
+
                 # Search -------------------------------------------------------
                 def on_tab(tab):
                     if tab == "Detect":
@@ -92,9 +96,9 @@ def index():
                                     .classes(GROW)
                                     .on("keydown.enter", lambda: do_search())
                                 )
-                                ui.button(
-                                    "Find", on_click=lambda: do_search()
-                                ).props("flat color=primary dense")
+                                ui.button("Find", on_click=lambda: do_search()).props(
+                                    "flat color=primary dense"
+                                )
                             search_status = ui.label("").classes(
                                 "text-caption text-grey q-mt-n2"
                             )
@@ -124,12 +128,63 @@ def index():
                                     value=config.DEFAULT_CONFIDENCE,
                                     on_change=lambda e: (
                                         state.set_confidence(e.value),
-                                        thresh_label.set_text(f"{e.value:.2f}"),
+                                        thresh_label.set_text(
+                                            f"{(e.value or 0.0) * 100:.0f}%"
+                                        ),
                                     ),
                                 ).classes(GROW)
                                 thresh_label = ui.label(
-                                    f"{config.DEFAULT_CONFIDENCE:.2f}"
+                                    f"{config.DEFAULT_CONFIDENCE * 100:.0f}%"
                                 ).classes("text-bold q-ml-sm")
+
+                        with ui.tab_panel("Face"):
+                            with ui.row().classes(IWN):
+                                ui.switch("Wireframe").bind_value_to(
+                                    state, "face_show_wireframe"
+                                )
+                            with ui.row().classes(IWN):
+                                ui.switch("Head Pose").bind_value_to(
+                                    state, "face_show_headpose"
+                                )
+                            with ui.row().classes(IWN):
+                                ui.switch("Age/Emotion").bind_value_to(
+                                    state, "face_show_labels"
+                                )
+                            with ui.row().classes(IWN):
+                                ui.switch("Spoof Detection").bind_value_to(
+                                    state, "face_show_fake_detection"
+                                )
+                            with ui.row().classes(IWN):
+                                ui.switch("Background Removal").bind_value_to(
+                                    state, "face_remove_background"
+                                )
+                            with ui.row().classes(IWN):
+                                ui.select(
+                                    ["None", "Pixelate", "Gaussian"],
+                                    value="None",
+                                    label="Privacy",
+                                    on_change=lambda e: setattr(
+                                        state, "privacy_mode", e.value
+                                    ),
+                                ).classes("w-full")
+                            with ui.row().classes(IWN):
+                                ui.select(
+                                    [
+                                        "None",
+                                        "Sketch",
+                                        "Thermal",
+                                        "VHS Glitch",
+                                        "Comic",
+                                        "Emboss",
+                                        "Invert",
+                                        "Sepia",
+                                    ],
+                                    value="None",
+                                    label="Filter",
+                                    on_change=lambda e: setattr(
+                                        state, "visual_filter", e.value
+                                    ),
+                                ).classes("w-full")
 
             # -- right column: live camera feed --
             with ui.column().classes("col-12 col-md-9"):
@@ -176,9 +231,7 @@ def start_services():
     logger.info("Starting services (device=%s)", device_str)
 
     try:
-        bundle = load_model_bundle(
-            config.PROMPTED_MODEL, config.PROMPTFREE_MODEL
-        )
+        bundle = load_model_bundle(config.PROMPTED_MODEL, config.PROMPTFREE_MODEL)
         state.set_models_ready(True)
         state.set_models_error(None)
         logger.info("Models loaded successfully")

@@ -37,7 +37,7 @@ def get_text_encoder():
         from ultralytics.nn.text_model import MobileCLIPTS
 
         text_encoder = MobileCLIPTS(
-            torch.device("cpu"), weight="models/mobileclip2_b.ts"
+            torch.device("cpu"), weight=f"{config.MODELS_DIR}/mobileclip2_b.ts"
         )
     return text_encoder
 

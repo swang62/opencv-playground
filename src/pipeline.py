@@ -11,7 +11,8 @@ import cv2
 from src import config
 from src.camera import create_camera
 from src.detection import annotate_frame, extract_detections
-from src.face import draw_face_mesh
+from src.face import apply_privacy, draw_face_mesh
+from src.filters import apply_visual_filter
 from src.state import get_predict_kwargs
 
 logger = logging.getLogger(__name__)
@@ -42,6 +43,7 @@ class CapturePipeline:
         self._camera_input = camera
         self._camera = None
         self._latest_frame = None
+        self._latest_frame_time = 0.0
         self._latest_encoded_frame = None
         self._frame_lock = threading.Lock()
         self._result_lock = threading.Lock()
@@ -120,20 +122,35 @@ class CapturePipeline:
                 self.state.set_camera_error(msg)
                 self.state.set_camera_ready(False)
                 break
+            now = time.time()
             with self._frame_lock:
-                self._latest_frame = cv2.flip(frame, 1)  # pyright: ignore[reportArgumentType, reportCallIssue]
+                assert frame is not None
+                self._latest_frame = cv2.flip(frame, 1)
+                self._latest_frame_time = now
         logger.info("Capture loop ended")
 
     def inference_loop(self):
         logger.info("Inference loop started")
         consecutive_errors = 0
+        stall_warned = False
         while not self.state.shutdown:
             with self._frame_lock:
                 frame = self._latest_frame
+                frame_time = self._latest_frame_time
 
             if frame is None:
                 time.sleep(0.005)
                 continue
+
+            # If display sleep has frozen the camera stream, skip inference
+            # so we don't busy-loop on a stale frame.
+            if time.time() - frame_time > 1.5:
+                if not stall_warned:
+                    logger.info("Camera stream stalled (display sleep?) — waiting")
+                    stall_warned = True
+                time.sleep(0.05)
+                continue
+            stall_warned = False
 
             t0 = time.perf_counter()
 
@@ -160,8 +177,25 @@ class CapturePipeline:
 
             if mode == "face":
                 detections = results  # already extracted dicts from FaceEngine
+                draw_frame = frame.copy()
+                if self.state.face_remove_background:
+                    draw_frame = self.model.face_engine.remove_background(draw_frame)
                 annotated = draw_face_mesh(
-                    frame.copy(), detections, self.state.frames_per_second
+                    draw_frame,
+                    detections,
+                    self.state.frames_per_second,
+                    show_wireframe=self.state.face_show_wireframe,
+                    show_headpose=self.state.face_show_headpose,
+                    show_labels=self.state.face_show_labels,
+                    show_fake_detection=self.state.face_show_fake_detection,
+                )
+                privacy_mode = self.state.privacy_mode
+                if privacy_mode != "None":
+                    annotated = apply_privacy(
+                        annotated, detections, privacy_mode, inplace=True,
+                    )
+                annotated = apply_visual_filter(
+                    annotated, self.state.visual_filter,
                 )
             else:
                 detections = extract_detections(
