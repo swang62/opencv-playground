@@ -25,10 +25,11 @@ class AppState:
     face_show_wireframe: bool = True
     face_show_headpose: bool = True
     face_show_labels: bool = True
-    face_show_fake_detection: bool = True
+    face_show_skeleton: bool = False
     face_remove_background: bool = False
     privacy_mode: str = "None"
     visual_filter: str = "None"
+    mask_opacity: float = config.MASK_OPACITY
 
     _lock: threading.Lock = field(
         default_factory=threading.Lock, repr=False, compare=False

@@ -53,8 +53,6 @@ def index():
     # ---- page chrome --------------------------------------------------------
     ui.add_head_html("""
     <style>
-      .q-tab--active { border: 2px solid var(--q-primary); border-radius: 8px 8px 0 0; }
-      .q-tab { border-bottom: 2px solid transparent; }
       .q-tab .q-tab__content { flex-direction: row; gap: 6px; }
       .q-tab .q-tab__icon { margin: 0; }
     </style>
@@ -64,9 +62,7 @@ def index():
         with ui.row().classes("w-full no-wrap"):
             # -- left column: controls --
             with ui.column().classes("col-12 col-md-3"):
-                ui.label("Real-time object detection").classes(
-                    "text-h4 text-weight-bold q-mt-md q-mb-md"
-                )
+                ui.element("div").style("height: 56px")  # spacer to align with title
 
                 # Search -------------------------------------------------------
                 def on_tab(tab):
@@ -102,6 +98,21 @@ def index():
                             search_status = ui.label("").classes(
                                 "text-caption text-grey q-mt-n2"
                             )
+                            with ui.row().classes(IWN):
+                                ui.label("Opacity").classes(CAP)
+                                opacity_slider = ui.slider(
+                                    min=0.05,
+                                    max=0.5,
+                                    step=0.05,
+                                    value=state.mask_opacity,
+                                    on_change=lambda e: opacity_label.set_text(
+                                        f"{(e.value or 0.0) * 100:.0f}%"
+                                    ),
+                                ).classes(GROW)
+                                opacity_slider.bind_value_to(state, "mask_opacity")
+                                opacity_label = ui.label(
+                                    f"{state.mask_opacity * 100:.0f}%"
+                                ).classes("text-bold q-ml-sm")
 
                         with ui.tab_panel("Detect"):
                             with ui.row().classes(IWN):
@@ -138,56 +149,53 @@ def index():
                                 ).classes("text-bold q-ml-sm")
 
                         with ui.tab_panel("Face"):
-                            with ui.row().classes(IWN):
-                                ui.switch("Wireframe").bind_value_to(
-                                    state, "face_show_wireframe"
-                                )
-                            with ui.row().classes(IWN):
-                                ui.switch("Head Pose").bind_value_to(
-                                    state, "face_show_headpose"
-                                )
-                            with ui.row().classes(IWN):
-                                ui.switch("Age/Emotion").bind_value_to(
-                                    state, "face_show_labels"
-                                )
-                            with ui.row().classes(IWN):
-                                ui.switch("Spoof Detection").bind_value_to(
-                                    state, "face_show_fake_detection"
-                                )
-                            with ui.row().classes(IWN):
-                                ui.switch("Background Removal").bind_value_to(
-                                    state, "face_remove_background"
-                                )
-                            with ui.row().classes(IWN):
-                                ui.select(
+                            ui.label("Privacy mode").classes(CAP)
+                            with ui.row().classes("w-full no-wrap"):
+                                ui.toggle(
                                     ["None", "Pixelate", "Gaussian"],
                                     value="None",
-                                    label="Privacy",
                                     on_change=lambda e: setattr(
                                         state, "privacy_mode", e.value
                                     ),
-                                ).classes("w-full")
+                                ).props("dense spread").classes("w-full")
                             with ui.row().classes(IWN):
                                 ui.select(
                                     [
                                         "None",
                                         "Sketch",
                                         "Thermal",
-                                        "VHS Glitch",
+                                        "CRT",
                                         "Comic",
-                                        "Emboss",
                                         "Invert",
-                                        "Sepia",
                                     ],
                                     value="None",
-                                    label="Filter",
+                                    label="Video filter",
                                     on_change=lambda e: setattr(
                                         state, "visual_filter", e.value
                                     ),
                                 ).classes("w-full")
+                            with ui.row().classes(IWN):
+                                ui.switch("Face mesh").bind_value_to(
+                                    state, "face_show_wireframe"
+                                )
+                            with ui.row().classes(IWN):
+                                ui.switch("Body mesh").bind_value_to(
+                                    state, "face_show_skeleton"
+                                )
+                            with ui.row().classes(IWN):
+                                ui.switch("Head direction").bind_value_to(
+                                    state, "face_show_headpose"
+                                )
+                            with ui.row().classes(IWN):
+                                ui.switch("Text labels").bind_value_to(
+                                    state, "face_show_labels"
+                                )
 
             # -- right column: live camera feed --
             with ui.column().classes("col-12 col-md-9"):
+                ui.label("Real-time object detection").classes(
+                    "text-h4 text-weight-bold text-center w-full q-mb-md"
+                )
                 cam = ui.interactive_image().classes("w-full border-1 rounded")
 
     # ---- Timer-driven refresh ------------------------------------------------

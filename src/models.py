@@ -74,7 +74,9 @@ class ModelBundle:
     _prompt_thread: threading.Thread | None = None
     _prompt_pending: str = ""
     _face_engine = None
+    _body_engine = None
     _face_lock: threading.Lock = threading.Lock()
+    _body_lock: threading.Lock = threading.Lock()
 
     @property
     def promptfree(self):
@@ -133,6 +135,19 @@ class ModelBundle:
                 logger.info("Face engine ready")
         return self._face_engine  # type: ignore[return-value]
 
+    @property
+    def body_engine(self):
+        """Lazy-load and cache the Pose + Hand Landmarker on first access."""
+        if self._body_engine is None:
+            with self._body_lock:
+                if self._body_engine is not None:
+                    return self._body_engine
+                from src.body import BodyEngine
+
+                self._body_engine = BodyEngine()
+                logger.info("Body engine ready")
+        return self._body_engine  # type: ignore[return-value]
+
     def predict(self, frame, mode: str, **kwargs):
         """Run inference through the model matching *mode*."""
         if mode == "face":
@@ -142,7 +157,7 @@ class ModelBundle:
         return self.promptfree.predict(frame, **kwargs)
 
     def warmup(self):
-        """Warm the prompted model, build text encoder, pre-warm head."""
+        """Warm all primary models at startup."""
         logger.info("Warming up prompted model...")
         warmup_model(self.prompted, self.device)
         logger.info("Pre-loading text encoder (mobileclip2) on CPU...")
@@ -157,6 +172,26 @@ class ModelBundle:
         except Exception as exc:
             logger.warning("Text encoder pre-load failed: %s", exc)
             logger.warning("First text prompt may trigger a download")
+
+        logger.info("Pre-loading prompt-free model...")
+        try:
+            _ = self.promptfree
+        except Exception as exc:
+            logger.warning("Prompt-free model load failed: %s", exc)
+
+        logger.info("Pre-loading face engine...")
+        try:
+            _ = self.face_engine
+        except Exception as exc:
+            logger.warning("Face engine load failed: %s", exc)
+
+        logger.info("Pre-loading body engine...")
+        try:
+            _ = self.body_engine
+        except Exception as exc:
+            logger.warning("Body engine load failed: %s", exc)
+
+        logger.info("All models ready")
 
 
 def load_model_bundle(

@@ -180,23 +180,38 @@ class CapturePipeline:
                 draw_frame = frame.copy()
                 if self.state.face_remove_background:
                     draw_frame = self.model.face_engine.remove_background(draw_frame)
+                draw_frame = apply_visual_filter(
+                    draw_frame, self.state.visual_filter,
+                )
                 annotated = draw_face_mesh(
                     draw_frame,
                     detections,
-                    self.state.frames_per_second,
                     show_wireframe=self.state.face_show_wireframe,
                     show_headpose=self.state.face_show_headpose,
                     show_labels=self.state.face_show_labels,
-                    show_fake_detection=self.state.face_show_fake_detection,
                 )
                 privacy_mode = self.state.privacy_mode
                 if privacy_mode != "None":
                     annotated = apply_privacy(
                         annotated, detections, privacy_mode, inplace=True,
                     )
-                annotated = apply_visual_filter(
-                    annotated, self.state.visual_filter,
-                )
+
+                if self.state.face_show_skeleton:
+                    try:
+                        poses = self.model.body_engine.process_pose(frame)
+                        for pts in poses:
+                            from src.body import draw_pose_skeleton
+                            draw_pose_skeleton(annotated, pts)
+                    except Exception:
+                        pass
+
+                    try:
+                        hands = self.model.body_engine.process_hands(frame)
+                        for pts in hands:
+                            from src.body import draw_hand_skeleton
+                            draw_hand_skeleton(annotated, pts)
+                    except Exception:
+                        pass
             else:
                 detections = extract_detections(
                     results, self.state.confidence, need_masks=(mode == "find")
@@ -214,8 +229,12 @@ class CapturePipeline:
                     )
                     detections = [d for d in detections if d["label"] in top_n]
 
+                draw_frame = apply_visual_filter(
+                    frame.copy(), self.state.visual_filter,
+                )
                 annotated = annotate_frame(
-                    frame, detections, self.state.frames_per_second, mode
+                    draw_frame, detections, self.state.frames_per_second, mode,
+                    mask_opacity=self.state.mask_opacity,
                 )
 
             elapsed = time.perf_counter() - t0

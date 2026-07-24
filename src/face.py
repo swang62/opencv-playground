@@ -27,19 +27,83 @@ MODEL_URL = (
 # ---------------------------------------------------------------------------
 
 FACE_OVAL = [
-    10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288, 397, 365,
-    379, 378, 400, 377, 152, 148, 176, 149, 150, 136, 172, 58, 132, 93,
-    234, 127, 162, 21, 54, 103, 67, 109, 10,
+    10,
+    338,
+    297,
+    332,
+    284,
+    251,
+    389,
+    356,
+    454,
+    323,
+    361,
+    288,
+    397,
+    365,
+    379,
+    378,
+    400,
+    377,
+    152,
+    148,
+    176,
+    149,
+    150,
+    136,
+    172,
+    58,
+    132,
+    93,
+    234,
+    127,
+    162,
+    21,
+    54,
+    103,
+    67,
+    109,
+    10,
 ]
 
 LEFT_EYE = [
-    33, 7, 163, 144, 145, 153, 154, 155, 133, 173, 157, 158, 159, 160,
-    161, 246, 33,
+    33,
+    7,
+    163,
+    144,
+    145,
+    153,
+    154,
+    155,
+    133,
+    173,
+    157,
+    158,
+    159,
+    160,
+    161,
+    246,
+    33,
 ]
 
 RIGHT_EYE = [
-    362, 382, 381, 380, 374, 373, 390, 249, 263, 466, 388, 387, 386, 385,
-    384, 398, 362,
+    362,
+    382,
+    381,
+    380,
+    374,
+    373,
+    390,
+    249,
+    263,
+    466,
+    388,
+    387,
+    386,
+    385,
+    384,
+    398,
+    362,
 ]
 
 LEFT_BROW = [46, 53, 52, 65, 55, 70, 63, 105, 66, 107]
@@ -49,18 +113,63 @@ NOSE_BRIDGE = [168, 6, 197, 195, 5, 4, 45]
 NOSE_BOTTOM = [2, 97, 98, 327, 326, 45]
 
 LIPS_OUTER = [
-    61, 146, 91, 181, 84, 17, 314, 405, 321, 375, 291, 409, 270, 269, 267,
-    0, 37, 39, 40, 185, 61,
+    61,
+    146,
+    91,
+    181,
+    84,
+    17,
+    314,
+    405,
+    321,
+    375,
+    291,
+    409,
+    270,
+    269,
+    267,
+    0,
+    37,
+    39,
+    40,
+    185,
+    61,
 ]
 
 LIPS_INNER = [
-    78, 191, 80, 81, 82, 13, 312, 311, 310, 415, 308, 324, 318, 402, 317,
-    14, 87, 178, 88, 95, 78,
+    78,
+    191,
+    80,
+    81,
+    82,
+    13,
+    312,
+    311,
+    310,
+    415,
+    308,
+    324,
+    318,
+    402,
+    317,
+    14,
+    87,
+    178,
+    88,
+    95,
+    78,
 ]
 
 ALL_CONTOURS = [
-    FACE_OVAL, LEFT_EYE, RIGHT_EYE, LEFT_BROW, RIGHT_BROW,
-    NOSE_BRIDGE, NOSE_BOTTOM, LIPS_OUTER, LIPS_INNER,
+    FACE_OVAL,
+    LEFT_EYE,
+    RIGHT_EYE,
+    LEFT_BROW,
+    RIGHT_BROW,
+    NOSE_BRIDGE,
+    NOSE_BOTTOM,
+    LIPS_OUTER,
+    LIPS_INNER,
 ]
 
 # Build flattened list of (i, j) index pairs for OpenCV polylines.
@@ -97,36 +206,27 @@ def download_model() -> Path:
 
 # Per-contour colors in BGR. Order matches ALL_CONTOURS.
 CONTOUR_COLORS = [
-    (0, 255, 0),          # FACE_OVAL - pure green outline
-    (255, 255, 0),        # LEFT_EYE - cyan
-    (255, 255, 0),        # RIGHT_EYE - cyan
-    (0, 255, 100),        # LEFT_BROW - warm green
-    (0, 255, 100),        # RIGHT_BROW - warm green
-    (100, 255, 0),        # NOSE_BRIDGE - yellow-green
-    (100, 255, 0),        # NOSE_BOTTOM - yellow-green
-    (0, 150, 255),        # LIPS_OUTER - orange
-    (0, 150, 255),        # LIPS_INNER - orange
+    (0, 255, 0),  # FACE_OVAL - pure green outline
+    (255, 255, 0),  # LEFT_EYE - cyan
+    (255, 255, 0),  # RIGHT_EYE - cyan
+    (0, 255, 100),  # LEFT_BROW - warm green
+    (0, 255, 100),  # RIGHT_BROW - warm green
+    (100, 255, 0),  # NOSE_BRIDGE - yellow-green
+    (100, 255, 0),  # NOSE_BOTTOM - yellow-green
+    (0, 150, 255),  # LIPS_OUTER - orange
+    (0, 150, 255),  # LIPS_INNER - orange
 ]
 
-# Precompute a color per landmark index (0-477) based on contour membership.
-LANDMARK_COLORS = []
-for i in range(478):
-    color = (0, 200, 0)  # default medium green
-    for ci, contour in enumerate(ALL_CONTOURS):
-        if i in contour:
-            color = CONTOUR_COLORS[ci]
-            break
-    LANDMARK_COLORS.append(color)
+# Precompute a color per landmark index (0-477) — all the same green.
+LANDMARK_COLORS = [config.OVERLAY_COLOR] * 478
 
 
 def draw_face_mesh(
     frame: np.ndarray,
     faces,
-    fps: float,
     show_wireframe: bool = True,
     show_headpose: bool = True,
     show_labels: bool = True,
-    show_fake_detection: bool = True,
 ) -> np.ndarray:
     """Draw face mesh, head pose arrow, and attribute labels on *frame*.
 
@@ -154,19 +254,26 @@ def draw_face_mesh(
 
         if show_wireframe:
             for ci, conn in enumerate(FACE_CONNECTIONS):
-                color = CONTOUR_COLORS[ci]
                 pixel_pts = np.array(
                     [(pts[i][0], pts[i][1]) for i in conn.flatten() if i < len(pts)],
                     dtype=np.int32,
                 ).reshape(-1, 1, 2)
                 cv2.polylines(
-                    frame, [pixel_pts], isClosed=False, color=color, thickness=2
+                    frame,
+                    [pixel_pts],
+                    isClosed=False,
+                    color=config.OVERLAY_COLOR,
+                    thickness=config.OVERLAY_THICKNESS,
                 )
 
             for i in range(0, len(pts), config.FACE_POINT_STRIDE):
                 cv2.circle(
-                    frame, (pts[i][0], pts[i][1]), 2,
-                    LANDMARK_COLORS[i], -1, lineType=cv2.LINE_AA,
+                    frame,
+                    (pts[i][0], pts[i][1]),
+                    2,
+                    LANDMARK_COLORS[i],
+                    -1,
+                    lineType=cv2.LINE_AA,
                 )
 
         cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
@@ -175,26 +282,20 @@ def draw_face_mesh(
         if show_headpose and "headpose" in face:
             hp = face["headpose"]
 
-            # 3D cube from UniFace
-            try:
-                from uniface.draw import draw_head_pose_cube
-
-                draw_head_pose_cube(
-                    frame, hp["yaw"], hp["pitch"], hp["roll"],
-                    [x1, y1, x2, y2],
-                )
-            except Exception:
-                pass
-
-            # Direction arrow (matches cube orientation)
+            # Direction arrow
             arrow_len = min(face_w * 0.8, 120)
             dy = -arrow_len * np.sin(np.radians(hp["pitch"]))
             dx = -arrow_len * np.sin(np.radians(hp["yaw"]))
             ex = int(cx + dx)
             ey = int(cy + dy)
             cv2.arrowedLine(
-                frame, (cx, cy), (ex, ey),
-                (0, 200, 255), 5, cv2.LINE_AA, tipLength=0.25,
+                frame,
+                (cx, cy),
+                (ex, ey),
+                (0, 200, 255),
+                5,
+                cv2.LINE_AA,
+                tipLength=0.25,
             )
 
         if show_labels:
@@ -212,37 +313,47 @@ def draw_face_mesh(
                 label = " | ".join(parts)
                 cx_text = (x1 + x2) // 2
                 (tw, th), _ = cv2.getTextSize(
-                    label, cv2.FONT_HERSHEY_SIMPLEX, 0.9, 2
+                    label,
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    config.FONT_SCALE,
+                    config.FONT_THICKNESS,
                 )
                 tx = max(cx_text - tw // 2, 4)
                 ty = max(y1 - 8, th + 4)
                 cv2.putText(
-                    frame, label, (tx, ty),
+                    frame,
+                    label,
+                    (tx, ty),
                     cv2.FONT_HERSHEY_SIMPLEX,
-                    0.9, (0, 255, 255), 2, lineType=cv2.LINE_AA,
+                    config.FONT_SCALE,
+                    (0, 255, 255),
+                    config.FONT_THICKNESS,
+                    lineType=cv2.LINE_AA,
                 )
 
-        if show_fake_detection and "spoof_real" in face and "spoof_confidence" in face:
+        if show_labels and "spoof_real" in face and "spoof_confidence" in face:
             real = face["spoof_real"]
             conf = face["spoof_confidence"]
-            spoof_label = f"{'Real' if real else 'Fake'}: {int(conf * 100)}%"
-            color = (0, 255, 0) if real else (0, 0, 255)
+            spoof_label = f"Real Human: {int(conf * 100) if real else 0}%"
             cx_s = (x1 + x2) // 2
             (sw, sh), _ = cv2.getTextSize(
-                spoof_label, cv2.FONT_HERSHEY_SIMPLEX, 0.9, 2
+                spoof_label,
+                cv2.FONT_HERSHEY_SIMPLEX,
+                config.FONT_SCALE,
+                config.FONT_THICKNESS,
             )
             sx = max(cx_s - sw // 2, 4)
             sy = min(y2 + sh + 8, frame.shape[0] - 4)
             cv2.putText(
-                frame, spoof_label, (sx, sy),
+                frame,
+                spoof_label,
+                (sx, sy),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                0.9, color, 2, lineType=cv2.LINE_AA,
+                config.FONT_SCALE,
+                (0, 255, 255),
+                config.FONT_THICKNESS,
+                lineType=cv2.LINE_AA,
             )
-
-    cv2.putText(
-        frame, f"FPS: {fps:.1f}", (10, 30),
-        cv2.FONT_HERSHEY_SIMPLEX, 1, config.FRAMES_PER_SECOND_COLOR, 2,
-    )
 
     return frame
 
@@ -312,9 +423,9 @@ class FaceEngine:
 
             model_path = download_model()
 
+            import mediapipe as mp  # noqa: F401 — needed for mp.Image below
             from mediapipe.tasks import python
             from mediapipe.tasks.python import vision
-            import mediapipe as mp  # noqa: F401 — needed for mp.Image below
 
             base_opts = python.BaseOptions(
                 model_asset_path=str(model_path),
@@ -338,9 +449,9 @@ class FaceEngine:
             if self._headpose is not None:
                 return
 
-            from uniface.headpose import HeadPose
             from uniface.attribute import AgeGender
             from uniface.attribute.emotion import Emotion
+            from uniface.headpose import HeadPose
             from uniface.spoofing import MiniFASNet
 
             logger.info("Loading UniFace attribute models...")
@@ -352,7 +463,8 @@ class FaceEngine:
                 from uniface.matting import MODNet, MODNetWeights
 
                 self._background_remover = MODNet(
-                    model_name=MODNetWeights.WEBCAM, input_size=192,
+                    model_name=MODNetWeights.WEBCAM,
+                    input_size=192,
                 )  # type: ignore[no-untyped-call]
                 self._bg_alpha_cache = None
                 logger.info("Background remover loaded (webcam, 192px)")
@@ -363,9 +475,14 @@ class FaceEngine:
     def _estimate_headpose(self, face_crop):
         try:
             from uniface.types import HeadPoseResult
+
             hp = self._headpose.estimate(face_crop)  # pyright: ignore
             if isinstance(hp, HeadPoseResult):
-                return {"pitch": float(hp.pitch), "yaw": float(hp.yaw), "roll": float(hp.roll)}
+                return {
+                    "pitch": float(hp.pitch),
+                    "yaw": float(hp.yaw),
+                    "roll": float(hp.roll),
+                }
         except Exception:
             pass
         return None
@@ -377,7 +494,9 @@ class FaceEngine:
         emotion = None
 
         try:
-            from uniface.types import Face as UniFace, AttributeResult
+            from uniface.types import AttributeResult
+            from uniface.types import Face as UniFace
+
             uf_face = UniFace(
                 bbox=np.array(bbox, dtype=np.float64),
                 confidence=0.95,
@@ -391,7 +510,9 @@ class FaceEngine:
             pass
 
         try:
-            from uniface.types import Face as UniFace2, EmotionResult
+            from uniface.types import EmotionResult
+            from uniface.types import Face as UniFace2
+
             uf_face2 = UniFace2(
                 bbox=np.array(bbox, dtype=np.float64),
                 confidence=0.95,
@@ -419,13 +540,19 @@ class FaceEngine:
                 alpha = self._bg_alpha_cache
             else:
                 h, w = frame.shape[:2]
-                small = cv2.resize(frame, (w // 2, h // 2), interpolation=cv2.INTER_LINEAR)
+                small = cv2.resize(
+                    frame, (w // 2, h // 2), interpolation=cv2.INTER_LINEAR
+                )
                 alpha_small = self._background_remover.predict(small)  # pyright: ignore
                 self._bg_alpha_cache = cv2.resize(
-                    alpha_small, (w, h), interpolation=cv2.INTER_LINEAR,
+                    alpha_small,
+                    (w, h),
+                    interpolation=cv2.INTER_LINEAR,
                 )
                 alpha = self._bg_alpha_cache
-            return (frame * alpha[..., None] + 255 * (1 - alpha[..., None])).astype(np.uint8)
+            return (frame * alpha[..., None] + 255 * (1 - alpha[..., None])).astype(
+                np.uint8
+            )
         except Exception:
             return frame
 
@@ -489,15 +616,26 @@ class FaceEngine:
                     if hp is not None:
                         face_dict["headpose"] = hp  # pyright: ignore
 
-            if self._age_gender is not None and self._emotion is not None and x2 > x1 and y2 > y1:
+            if (
+                self._age_gender is not None
+                and self._emotion is not None
+                and x2 > x1
+                and y2 > y1
+            ):
                 self._mediapipe_5pt = [
-                    (sum(pts[i][0] for i in LEFT_EYE) // len(LEFT_EYE),   # left eye center
-                     sum(pts[i][1] for i in LEFT_EYE) // len(LEFT_EYE)),
-                    (sum(pts[i][0] for i in RIGHT_EYE) // len(RIGHT_EYE),  # right eye center
-                     sum(pts[i][1] for i in RIGHT_EYE) // len(RIGHT_EYE)),
-                    pts[1],       # nose tip
-                    pts[61],      # left mouth corner
-                    pts[291],     # right mouth corner
+                    (
+                        sum(pts[i][0] for i in LEFT_EYE)
+                        // len(LEFT_EYE),  # left eye center
+                        sum(pts[i][1] for i in LEFT_EYE) // len(LEFT_EYE),
+                    ),
+                    (
+                        sum(pts[i][0] for i in RIGHT_EYE)
+                        // len(RIGHT_EYE),  # right eye center
+                        sum(pts[i][1] for i in RIGHT_EYE) // len(RIGHT_EYE),
+                    ),
+                    pts[1],  # nose tip
+                    pts[61],  # left mouth corner
+                    pts[291],  # right mouth corner
                 ]
                 age, gender, emotion = self._predict_attributes(
                     frame, (x1, y1, x2, y2), self._mediapipe_5pt

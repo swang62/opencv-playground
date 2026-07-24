@@ -55,7 +55,7 @@ def extract_detections(results, confidence: float, need_masks: bool = True):
     return detections
 
 
-def annotate_frame(frame, detections, fps: float, mode: str = "find"):
+def annotate_frame(frame, detections, fps: float, mode: str = "find", mask_opacity: float = config.MASK_OPACITY):
     """Draw boxes, masks, and labels on a copy of *frame*.
 
     In ``"everything"`` mode: bounding boxes with labels.
@@ -71,18 +71,19 @@ def annotate_frame(frame, detections, fps: float, mode: str = "find"):
             x1, y1, x2, y2 = map(int, det["bbox"])
             cv2.rectangle(
                 annotated, (x1, y1), (x2, y2),
-                config.BOUNDING_BOX_COLOR, 2,
+                config.OVERLAY_COLOR, config.OVERLAY_THICKNESS,
             )
             conf_pct = int(det["confidence"] * 100)
             cv2.putText(
                 annotated, f"{det['label']} ({conf_pct}%)", (x1, y1 - 6),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                config.LABEL_FONT_SCALE, config.LABEL_COLOR,
-                config.LABEL_FONT_THICKNESS,
+                config.FONT_SCALE, config.OVERLAY_COLOR,
+                config.FONT_THICKNESS,
             )
     else:
         if green_buf is None or green_buf.shape[:2] != (h, w):
             green_buf = np.zeros((h, w, 3), dtype=np.uint8)
+        green_buf.fill(0)
 
         for det in detections:
             mask = det.get("mask")
@@ -92,23 +93,23 @@ def annotate_frame(frame, detections, fps: float, mode: str = "find"):
                 mask_rz = cv2.resize(
                     mask.astype(np.float32), (w, h), interpolation=cv2.INTER_NEAREST
                 )
-                green_buf.fill(0)
-                green_buf[mask_rz > 0.25] = (0, 200, 0)
-                annotated = cv2.addWeighted(annotated, 0.9, green_buf, 0.2, 0)
+                green_buf[mask_rz > 0.25] = config.OVERLAY_COLOR
 
+        if green_buf.any():
+            mask_region = green_buf.any(axis=2)
+            annotated[mask_region] = cv2.addWeighted(
+                annotated[mask_region], 1 - mask_opacity,
+                green_buf[mask_region], mask_opacity, 0,
+            )
+
+        for det in detections:
+            x1, y1, x2, y2 = map(int, det["bbox"])
             cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
             cv2.putText(
                 annotated, det["label"], (cx, cy),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                config.LABEL_FONT_SCALE, config.LABEL_COLOR,
-                config.LABEL_FONT_THICKNESS,
+                config.FONT_SCALE, config.OVERLAY_COLOR,
+                config.FONT_THICKNESS,
             )
 
-    cv2.putText(
-        annotated, f"FPS: {fps:.1f}", (10, 30),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        config.FRAMES_PER_SECOND_FONT_SCALE,
-        config.FRAMES_PER_SECOND_COLOR,
-        config.FRAMES_PER_SECOND_FONT_THICKNESS,
-    )
     return annotated
