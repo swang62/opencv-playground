@@ -1,0 +1,38 @@
+# Model checkpoints
+*.pt
+*.pth
+*.bin
+weights/
+models/
+
+# Ultralytics runs / generated outputs
+runs/
+datasets/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environment
+.venv/
+venv/
+.env.local
+.env
+
+# Build artifacts
+dist/
+build/
+*.egg-info/
+
+# macOS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo

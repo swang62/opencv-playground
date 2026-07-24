@@ -1,0 +1,20 @@
+[project]
+name = "object-detection"
+version = "0.1.0"
+description = "Webcam object detection with YOLOE-26"
+requires-python = ">=3.13"
+dependencies = [
+    "nicegui>=3.13.0",
+    "ultralytics>=8.4.60",
+    "opencv-python>=4.9.0",
+    "pyobjc-framework-AVFoundation>=10 ; platform_system == 'Darwin'",
+    "mediapipe>=0.10.35",
+    "uniface>=3.7.1",
+]
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[tool.uv]
+package = true
+default-groups = "all"
