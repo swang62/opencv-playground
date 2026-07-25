@@ -8,6 +8,8 @@ import threading
 import cv2
 import numpy as np
 
+from src import config
+
 IS_MACOS = platform.system() == "Darwin"
 
 # ---- macOS native camera (AVFoundation via pyobjc) --------------------------
@@ -151,6 +153,6 @@ def create_camera(camera_id: int):
     cap = cv2.VideoCapture(camera_id)
     if not cap.isOpened():
         raise RuntimeError(f"Camera {camera_id} failed to open")
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, config.CAMERA_WIDTH)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, config.CAMERA_HEIGHT)
     return cap

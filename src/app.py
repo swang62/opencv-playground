@@ -62,38 +62,40 @@ def index():
         search_status.set_text(text)
 
     # ---- page chrome --------------------------------------------------------
-    ui.add_head_html("""
+    ui.add_head_html(f"""
     <style>
-      body { background: #0e0e14; }
-      .q-page { background: linear-gradient(180deg, #0e0e14 0%, #16161f 100%); }
-      .q-card { border-radius: 12px; box-shadow: 0 2px 16px rgba(0,0,0,0.35) !important; }
-      .text-h4 { letter-spacing: -0.02em; }
-      .q-tab { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex-shrink: 1; min-width: 0; }
-      .q-tab .q-tab__content { flex-direction: row; gap: 4px; }
-      .q-tab .q-tab__icon { margin: 0; }
-      .face-chip-img {
+      body {{ background: #0e0e14; }}
+      .q-page {{ background: linear-gradient(180deg, #0e0e14 0%, #16161f 100%); }}
+      .q-card {{ border-radius: 12px; box-shadow: 0 2px 16px rgba(0,0,0,0.35) !important; }}
+      .text-h4 {{ letter-spacing: -0.02em; }}
+      .q-tab {{ white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex-shrink: 1; min-width: 0; }}
+      .q-tab .q-tab__content {{ flex-direction: row; gap: 4px; }}
+      .q-tab .q-tab__icon {{ margin: 0; }}
+      .face-chip-img {{
         width: 100% !important;
-        height: 88px !important;
+        height: {config.FACE_CHIP_WIDTH}px !important;
         object-fit: cover;
         display: block;
         flex-shrink: 0;
-      }
-      .face-chip-action-btn {
+      }}
+      .face-chip-action-btn {{
         opacity: 0;
         transition: opacity 0.15s;
         background: rgba(10, 10, 14, 0.95) !important;
         border: 1px solid rgba(255, 255, 255, 0.2);
         color: #fff !important;
-      }
-      .face-chip-container:hover .face-chip-action-btn { opacity: 1; }
-      .face-chip-placeholder { width: 100%; height: 88px; background: #fff; flex-shrink: 0; }
+      }}
+      .face-chip-container:hover .face-chip-action-btn {{ opacity: 1; }}
+      .face-chip-placeholder {{ width: 100%; height: {config.FACE_CHIP_WIDTH}px; background: #fff; flex-shrink: 0; }}
     </style>
     """)
 
     with (
         ui.element("div")
         .classes(FW)
-        .style("max-width: 1200px; margin: 0 auto; padding: 24px 20px;")
+        .style(
+            f"max-width: {config.PAGE_MAX_WIDTH}px; margin: 0 auto; padding: {config.PAGE_PADDING_VERTICAL}px {config.PAGE_PADDING_HORIZONTAL}px;"
+        )
     ):
         with ui.row().classes("w-full flex-wrap items-start"):
             # -- webcam (left on desktop, top on mobile) --
@@ -150,7 +152,10 @@ def index():
                     x1, y1, x2, y2 = map(int, detection["bbox"])
                     thumb = frame[y1:y2, x1:x2]
                     if thumb.size > 0:
-                        scale = min(64 / thumb.shape[1], 64 / thumb.shape[0])
+                        scale = min(
+                            config.FACE_THUMBNAIL_SIZE / thumb.shape[1],
+                            config.FACE_THUMBNAIL_SIZE / thumb.shape[0],
+                        )
                         new_w = max(1, int(thumb.shape[1] * scale))
                         new_h = max(1, int(thumb.shape[0] * scale))
                         thumb_resized = cv2.resize(thumb, (new_w, new_h))
@@ -209,7 +214,7 @@ def index():
                                     "face-chip-container column no-wrap bg-grey-9 text-white"
                                 )
                                 .style(
-                                    "gap: 0; border: 1px solid rgba(255,255,255,0.15); width: 88px; height: 112px; flex-shrink: 0; overflow: hidden; border-radius: 8px;"
+                                    f"gap: 0; border: 1px solid rgba(255,255,255,0.15); width: {config.FACE_CHIP_WIDTH}px; height: {config.FACE_CHIP_HEIGHT}px; flex-shrink: 0; overflow: hidden; border-radius: 8px;"
                                 )
                             ):
                                 ui.tooltip(tooltip_text)
