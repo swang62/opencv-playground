@@ -2,26 +2,30 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import ssl
 import threading
 import urllib.request
 from pathlib import Path
 
-import mediapipe as mp
 import cv2
+import mediapipe as mp
 import numpy as np
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 from uniface.attribute import AgeGender
 from uniface.attribute.emotion import Emotion
+from uniface.constants import MobileFaceWeights, SCRFDWeights
+from uniface.detection import SCRFD
+from uniface.face_utils import compute_similarity
 from uniface.headpose import HeadPose
 from uniface.privacy import BlurFace
+from uniface.recognition import MobileFace
 from uniface.spoofing import MiniFASNet
-from uniface.types import AttributeResult
-from uniface.types import EmotionResult
+from uniface.tracking import BYTETracker
+from uniface.types import AttributeResult, EmotionResult, HeadPoseResult
 from uniface.types import Face as UniFace
-from uniface.types import HeadPoseResult
 
 from src import config
 
@@ -29,6 +33,7 @@ logger = logging.getLogger(__name__)
 
 MODEL_DIR = Path(config.MODELS_DIR)
 MODEL_FILE = MODEL_DIR / "face_landmarker_v2.task"
+FACE_IDENTITIES_PATH = MODEL_DIR / "identities.json"
 MODEL_URL = (
     "https://storage.googleapis.com/mediapipe-models/"
     "face_landmarker/face_landmarker/float16/latest/face_landmarker.task"
@@ -242,6 +247,7 @@ def draw_face_mesh(
     font_scale: float = config.FONT_SCALE,
     font_thickness: int = config.FONT_THICKNESS,
     line_thickness: int = config.OVERLAY_THICKNESS,
+    face_id_names: dict[int, str] | None = None,
 ) -> np.ndarray:
     """Draw face mesh, head pose arrow, and attribute labels on *frame*.
 
@@ -261,6 +267,8 @@ def draw_face_mesh(
         Whether to draw the head pose direction arrow.
     show_labels : bool
         Whether to draw age/gender/emotion text.
+    face_id_names : dict[int, str] | None
+        Optional mapping of track_id to user-assigned name.
     """
     for face in faces:
         pts = face["landmarks"]
@@ -318,7 +326,7 @@ def draw_face_mesh(
             if "age" in face:
                 parts.append(f"Age: {face['age']}")
             if "gender" in face:
-                parts.append(f"Gender: {face['gender']}")
+                parts.append(f"Gender: {face['gender'][0].upper()}")
             if "emotion" in face:
                 em = face["emotion"]
                 if em in ("Neutral", "neutral"):
@@ -346,10 +354,17 @@ def draw_face_mesh(
                     lineType=cv2.LINE_AA,
                 )
 
-        if show_labels and "spoof_real" in face and "spoof_confidence" in face:
-            real = face["spoof_real"]
+        if show_labels and "spoof_confidence" in face:
             conf = face["spoof_confidence"]
-            spoof_label = f"Real Human: {int(conf * 100) if real else 0}%"
+            spoof_label = f"Human: {int(conf * 100)}%"
+            if "track_id" in face:
+                tid = face["track_id"]
+                name = face_id_names.get(tid, "") if face_id_names else ""
+                if name:
+                    spoof_label = f"{name.upper()} | " + spoof_label
+                else:
+                    spoof_label = f"ID: {tid} | " + spoof_label
+
             cx_s = (x1 + x2) // 2
             (sw, sh), _ = cv2.getTextSize(
                 spoof_label,
@@ -423,6 +438,11 @@ class FaceEngine:
         self._spoofing = None
         self._uniface_lock = threading.Lock()
         self._mediapipe_5pt = None
+        self._face_id_detector = None
+        self._bytetracker = None
+        self._face_recognizer = None
+        self._known_face_embeddings: dict[str, list[float]] = {}
+        self._track_identity_cache: dict[int, str] = {}
 
     def ensure_loaded(self):
         if self._landmarker is not None:
@@ -550,6 +570,233 @@ class FaceEngine:
             pass
 
         return age, gender, emotion
+
+    def _load_known_face_embeddings(self):
+        if self._known_face_embeddings:
+            return
+        try:
+            if FACE_IDENTITIES_PATH.exists():
+                with FACE_IDENTITIES_PATH.open() as file_handle:
+                    data = json.load(file_handle)
+                self._known_face_embeddings = {
+                    str(name): [float(value) for value in embedding]
+                    for name, embedding in data.items()
+                    if isinstance(embedding, list)
+                }
+        except Exception as exc:
+            logger.warning("Failed to load face identities: %s", exc)
+
+    def _save_known_face_embeddings(self):
+        try:
+            with FACE_IDENTITIES_PATH.open("w") as file_handle:
+                json.dump(self._known_face_embeddings, file_handle, indent=2)
+        except Exception as exc:
+            logger.warning("Failed to save face identities: %s", exc)
+
+    def _ensure_face_id_models(self, load_recognizer: bool = False):
+        """Lazy-load SCRFD/ByteTrack, and MobileFace only when needed."""
+        if self._face_id_detector is None:
+            with self._uniface_lock:
+                if self._face_id_detector is None:
+                    logger.info("Loading UniFace face ID detector (SCRFD 500M)...")
+                    self._face_id_detector = SCRFD(
+                        model_name=SCRFDWeights.SCRFD_500M_KPS,
+                    )
+                    self._bytetracker = BYTETracker()
+        if load_recognizer and self._face_recognizer is None:
+            with self._uniface_lock:
+                if self._face_recognizer is None:
+                    logger.info("Loading UniFace MobileFace recognizer (MNET_025)...")
+                    self._face_recognizer = MobileFace(
+                        model_name=MobileFaceWeights.MNET_025,
+                    )
+                    self._load_known_face_embeddings()
+
+    @staticmethod
+    def _bbox_iou(bbox_a, bbox_b) -> float:
+        """Compute IoU between two bboxes in (x1, y1, x2, y2) format."""
+        ax1, ay1, ax2, ay2 = bbox_a
+        bx1, by1, bx2, by2 = bbox_b
+        xi1 = max(ax1, bx1)
+        yi1 = max(ay1, by1)
+        xi2 = min(ax2, bx2)
+        yi2 = min(ay2, by2)
+        inter = max(0, xi2 - xi1) * max(0, yi2 - yi1)
+        area_a = max(1, (ax2 - ax1) * (ay2 - ay1))
+        area_b = max(1, (bx2 - bx1) * (by2 - by1))
+        return inter / (area_a + area_b - inter + 1e-6)
+
+    @staticmethod
+    def _get_five_point_landmarks(landmarks: list[tuple[int, int]]) -> np.ndarray:
+        return np.array(
+            [
+                (
+                    sum(landmarks[index][0] for index in LEFT_EYE) // len(LEFT_EYE),
+                    sum(landmarks[index][1] for index in LEFT_EYE) // len(LEFT_EYE),
+                ),
+                (
+                    sum(landmarks[index][0] for index in RIGHT_EYE) // len(RIGHT_EYE),
+                    sum(landmarks[index][1] for index in RIGHT_EYE) // len(RIGHT_EYE),
+                ),
+                landmarks[1],
+                landmarks[61],
+                landmarks[291],
+            ],
+            dtype=np.float32,
+        )
+
+    def _recognize_detection(self, frame: np.ndarray, detection: dict) -> str | None:
+        if not self._known_face_embeddings:
+            return None
+        self._ensure_face_id_models(load_recognizer=True)
+        assert self._face_recognizer is not None
+        try:
+            embedding = self._face_recognizer.get_normalized_embedding(
+                frame,
+                self._get_five_point_landmarks(detection["landmarks"]),
+            )
+        except Exception as exc:
+            logger.warning("Face recognition failed: %s", exc)
+            return None
+
+        best_name = None
+        best_similarity = config.FACE_ID_SIMILARITY_THRESHOLD
+        for name, stored_embedding in self._known_face_embeddings.items():
+            similarity = float(
+                compute_similarity(
+                    np.array(stored_embedding, dtype=np.float32),
+                    embedding,
+                    normalized=True,
+                )
+            )
+            if similarity > best_similarity:
+                best_similarity = similarity
+                best_name = name
+        return best_name
+
+    def enroll_identity(
+        self, name: str, frame: np.ndarray, detection: dict, track_id: int
+    ):
+        self._ensure_face_id_models(load_recognizer=True)
+        assert self._face_recognizer is not None
+        embedding = self._face_recognizer.get_normalized_embedding(
+            frame,
+            self._get_five_point_landmarks(detection["landmarks"]),
+        )
+        self._known_face_embeddings[name] = embedding.astype(float).tolist()
+        self._track_identity_cache[track_id] = name
+        self._save_known_face_embeddings()
+
+    def remove_identity(self, name: str, track_id: int | None = None):
+        self._known_face_embeddings.pop(name, None)
+        if track_id is not None:
+            self._track_identity_cache.pop(track_id, None)
+        else:
+            self._track_identity_cache = {
+                cached_track_id: cached_name
+                for cached_track_id, cached_name in self._track_identity_cache.items()
+                if cached_name != name
+            }
+        self._save_known_face_embeddings()
+
+    def apply_face_identities(
+        self, frame: np.ndarray, detections: list[dict]
+    ) -> list[dict]:
+        """Track every frame, recognize only newly seen track IDs."""
+        self.track_face_ids(frame, detections)
+
+        active_track_ids = {
+            int(detection["track_id"])
+            for detection in detections
+            if "track_id" in detection
+        }
+        self._track_identity_cache = {
+            track_id: name
+            for track_id, name in self._track_identity_cache.items()
+            if track_id in active_track_ids
+        }
+
+        for detection in detections:
+            track_id = detection.get("track_id")
+            if track_id is None:
+                continue
+            cached_name = self._track_identity_cache.get(int(track_id))
+            if cached_name is not None:
+                detection["identity_name"] = cached_name
+                continue
+            identity_name = self._recognize_detection(frame, detection)
+            if identity_name is not None:
+                self._track_identity_cache[int(track_id)] = identity_name
+                detection["identity_name"] = identity_name
+
+        return detections
+
+    def merge_face_identity_results(
+        self,
+        detections: list[dict],
+        identity_results: list[dict],
+    ) -> list[dict]:
+        for detection in detections:
+            best_match = None
+            best_iou = 0.0
+            for identity_result in identity_results:
+                iou = self._bbox_iou(detection["bbox"], identity_result["bbox"])
+                if iou > best_iou:
+                    best_iou = iou
+                    best_match = identity_result
+            if best_match is None or best_iou <= 0.3:
+                continue
+            if "track_id" in best_match:
+                detection["track_id"] = int(best_match["track_id"])
+            if "identity_name" in best_match:
+                detection["identity_name"] = str(best_match["identity_name"])
+        return detections
+
+    def track_face_ids(self, frame: np.ndarray, detections: list[dict]) -> list[dict]:
+        """Attach persistent track IDs to face dicts via detector + ByteTrack.
+
+        Runs SCRFD face detection on the full frame, feeds detections into
+        ByteTrack, then associates track IDs with the existing MediaPipe face
+        dicts by IoU matching.  Returns the same ``detections`` list with
+        ``track_id`` set in-place.
+        """
+        self._ensure_face_id_models()
+        assert self._face_id_detector is not None
+        assert self._bytetracker is not None
+
+        # Run face detector
+        uniface_faces = self._face_id_detector.detect(frame)
+        if not uniface_faces:
+            return detections
+
+        # Build (N, 5) array for ByteTrack: [x1, y1, x2, y2, score]
+        dets = np.array(
+            [
+                [f.bbox[0], f.bbox[1], f.bbox[2], f.bbox[3], f.confidence]
+                for f in uniface_faces
+            ],
+            dtype=np.float32,
+        )
+
+        # Update tracker -> (M, 5) with [x1, y1, x2, y2, track_id]
+        tracks = self._bytetracker.update(dets)
+        if len(tracks) == 0:
+            return detections
+
+        # Associate track IDs with MediaPipe faces via best IoU
+        for det_face in detections:
+            db = det_face["bbox"]
+            best_iou = 0.0
+            best_id = None
+            for track in tracks:
+                iou = self._bbox_iou(db, (track[0], track[1], track[2], track[3]))
+                if iou > best_iou:
+                    best_iou = iou
+                    best_id = int(track[4])
+            if best_id is not None and best_iou > 0.3:
+                det_face["track_id"] = best_id
+
+        return detections
 
     def process(
         self,

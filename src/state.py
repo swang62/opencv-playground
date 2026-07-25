@@ -25,6 +25,9 @@ class AppState:
     face_show_headpose: bool = True
     face_show_labels: bool = True
     face_show_skeleton: bool = False
+    face_show_ids: bool = False
+    face_id_names: dict[int, str] = field(default_factory=dict)
+    active_face_ids: set[int] = field(default_factory=set)
     privacy_mode: str = "None"
     visual_filter: str = "None"
     mask_opacity: float = config.MASK_OPACITY
@@ -68,6 +71,22 @@ class AppState:
     def signal_shutdown(self):
         with self._lock:
             self.shutdown = True
+
+    def set_active_face_ids(self, ids: set[int]):
+        with self._lock:
+            self.active_face_ids = ids
+
+    def set_face_id_name(self, track_id: int, name: str):
+        with self._lock:
+            self.face_id_names[track_id] = name
+
+    def clear_face_id_name(self, track_id: int):
+        with self._lock:
+            self.face_id_names.pop(track_id, None)
+
+    def load_face_id_names(self):
+        with self._lock:
+            self.face_id_names = {}
 
 
 def get_predict_kwargs(state: AppState):

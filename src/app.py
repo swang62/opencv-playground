@@ -37,6 +37,7 @@ def index():
     GROW = "flex-grow"
     current_search_status = ""
     current_frame_jpeg: bytes | None = None
+    current_face_chip_key: tuple[tuple[int, str], ...] = ()
 
     def set_search_status(text: str):
         nonlocal current_search_status
@@ -62,6 +63,108 @@ def index():
                     "text-h4 text-weight-bold text-center w-full q-mb-md"
                 )
                 cam = ui.interactive_image().classes("w-full border-1 rounded")
+
+                # -- Face ID chips (under webcam) --
+                state.load_face_id_names()
+                face_id_chip_row = ui.row().classes("w-full q-mt-sm gap-2 flex-wrap")
+                face_id_chip_row.visible = False
+
+                add_name_dialog = ui.dialog()
+                with add_name_dialog, ui.card().classes("w-80"):
+                    ui.label("Save Face Name").classes("text-bold text-h6")
+                    add_name_input = ui.input(
+                        label="Name", placeholder="Enter a name..."
+                    ).classes("w-full")
+                    with ui.row().classes("w-full justify-end"):
+                        ui.button("Cancel", on_click=add_name_dialog.close).props(
+                            "flat"
+                        )
+                        save_name_button = ui.button("Save").props("color=primary")
+
+                pending_face_track_id: int | None = None
+
+                def save_face_name():
+                    nonlocal current_face_chip_key, pending_face_track_id
+                    name = (add_name_input.value or "").strip()
+                    track_id = pending_face_track_id
+                    if track_id is None:
+                        return
+                    if not name:
+                        ui.notify("Enter a name", type="warning")
+                        return
+                    if pipeline is None:
+                        ui.notify("Camera pipeline not ready", type="warning")
+                        return
+                    frame = pipeline.get_latest_frame_copy()
+                    detection = pipeline.get_latest_face_detection(track_id)
+                    if frame is None or detection is None:
+                        ui.notify("Selected face is no longer active", type="warning")
+                        return
+                    pipeline.model.face_engine.enroll_identity(
+                        name,
+                        frame,
+                        detection,
+                        track_id,
+                    )
+                    state.set_face_id_name(track_id, name)
+                    add_name_input.value = ""
+                    pending_face_track_id = None
+                    current_face_chip_key = ()
+                    add_name_dialog.close()
+
+                save_name_button.on_click(save_face_name)
+
+                def open_add_name(track_id: int):
+                    nonlocal pending_face_track_id
+                    pending_face_track_id = track_id
+                    add_name_input.value = state.face_id_names.get(track_id, "")
+                    add_name_dialog.open()
+
+                def delete_face_name(track_id: int):
+                    nonlocal current_face_chip_key
+                    if pipeline is None:
+                        ui.notify("Camera pipeline not ready", type="warning")
+                        return
+                    name = state.face_id_names.get(track_id, "")
+                    if not name:
+                        return
+                    pipeline.model.face_engine.remove_identity(name, track_id)
+                    state.clear_face_id_name(track_id)
+                    current_face_chip_key = ()
+
+                def rebuild_face_id_chips():
+                    face_id_chip_row.clear()
+                    active_ids = sorted(state.active_face_ids)
+                    with face_id_chip_row:
+                        for track_id in active_ids:
+                            name = state.face_id_names.get(track_id, "")
+                            label = name or f"ID: {track_id}"
+                            with (
+                                ui.element("div")
+                                .classes(
+                                    "row items-center no-wrap q-px-sm q-py-xs rounded-borders bg-grey-9 text-white"
+                                )
+                                .style(
+                                    "gap: 6px; border: 1px solid rgba(255,255,255,0.15);"
+                                )
+                            ):
+                                ui.label(label.upper()).classes("text-caption")
+                                if name:
+                                    ui.button(
+                                        "",
+                                        icon="close",
+                                        on_click=lambda _, tid=track_id: (
+                                            delete_face_name(tid)
+                                        ),
+                                    ).props("dense flat round size=sm color=white")
+                                else:
+                                    ui.button(
+                                        "",
+                                        icon="add",
+                                        on_click=lambda _, tid=track_id: open_add_name(
+                                            tid
+                                        ),
+                                    ).props("dense flat round size=sm color=white")
 
             # -- controls (right on desktop, bottom on mobile) --
             with ui.column().classes("flex-none"):
@@ -193,6 +296,10 @@ def index():
                                 ui.switch("Labels").bind_value_to(
                                     state, "face_show_labels"
                                 )
+                            with ui.row().classes(IWN):
+                                ui.switch("Face IDs").bind_value_to(
+                                    state, "face_show_ids"
+                                )
 
                 # -- Global settings below tabs --
                 with ui.card().classes("w-full q-pa-md"):
@@ -239,13 +346,24 @@ def index():
 
     # ---- Timer-driven refresh ------------------------------------------------
     def refresh_all():
-        nonlocal current_frame_jpeg
+        nonlocal current_face_chip_key, current_frame_jpeg
         if pipeline is not None:
             jpeg = pipeline.get_latest_encoded_frame()
             if jpeg is not None and jpeg != current_frame_jpeg:
                 current_frame_jpeg = jpeg
                 encoded = base64.b64encode(jpeg).decode("ascii")
                 cam.set_source(f"data:image/jpeg;base64,{encoded}")
+        show_chips = state.mode == "face" and state.face_show_ids
+        if show_chips != face_id_chip_row.visible:
+            face_id_chip_row.visible = show_chips
+        if show_chips:
+            face_chip_key = tuple(
+                (track_id, state.face_id_names.get(track_id, ""))
+                for track_id in sorted(state.active_face_ids)
+            )
+            if face_chip_key != current_face_chip_key:
+                current_face_chip_key = face_chip_key
+                rebuild_face_id_chips()
         update_search_status()
 
     ui.timer(1 / 30, refresh_all)

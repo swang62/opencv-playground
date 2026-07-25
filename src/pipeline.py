@@ -46,10 +46,17 @@ class CapturePipeline:
         self._latest_frame = None
         self._latest_frame_time = 0.0
         self._latest_encoded_frame = None
+        self._latest_face_detections: list[dict] = []
+        self._latest_face_identity_results: list[dict] = []
+        self._face_id_input_frame = None
+        self._face_id_input_detections: list[dict] = []
+        self._face_id_input_time = 0.0
         self._frame_lock = threading.Lock()
         self._result_lock = threading.Lock()
+        self._face_id_lock = threading.Lock()
         self._capture_thread: threading.Thread | None = None
         self._inference_thread: threading.Thread | None = None
+        self._face_id_thread: threading.Thread | None = None
         self.error: str | None = None
 
     def _get_first_frame(self, timeout_seconds: float = 5.0):
@@ -129,7 +136,9 @@ class CapturePipeline:
         self._inference_thread = threading.Thread(
             target=self.inference_loop, daemon=True
         )
+        self._face_id_thread = threading.Thread(target=self.face_id_loop, daemon=True)
         self._inference_thread.start()
+        self._face_id_thread.start()
         logger.info("Capture and inference threads started")
 
     def stop(self):
@@ -141,6 +150,8 @@ class CapturePipeline:
             self._capture_thread.join(timeout=5)
         if self._inference_thread is not None:
             self._inference_thread.join(timeout=5)
+        if self._face_id_thread is not None:
+            self._face_id_thread.join(timeout=5)
 
         if self._camera is not None:
             self._camera.release()
@@ -150,6 +161,63 @@ class CapturePipeline:
         """Return the most recent annotated image bytes, or None."""
         with self._result_lock:
             return self._latest_encoded_frame
+
+    def get_latest_frame_copy(self):
+        with self._frame_lock:
+            if self._latest_frame is None:
+                return None
+            return self._latest_frame.copy()
+
+    def get_latest_face_detection(self, track_id: int):
+        with self._result_lock:
+            for detection in self._latest_face_detections:
+                if detection.get("track_id") == track_id:
+                    return detection.copy()
+        return None
+
+    def face_id_loop(self):
+        logger.info("Face ID loop started")
+        last_processed_time = 0.0
+        while not self.state.shutdown:
+            with self._face_id_lock:
+                request_time = self._face_id_input_time
+                frame = (
+                    None
+                    if self._face_id_input_frame is None
+                    else self._face_id_input_frame.copy()
+                )
+                detections = [
+                    detection.copy() for detection in self._face_id_input_detections
+                ]
+
+            if request_time <= last_processed_time or frame is None or not detections:
+                time.sleep(0.01)
+                continue
+
+            try:
+                identity_results = self.model.face_engine.apply_face_identities(
+                    frame, detections
+                )
+                current_ids = {
+                    detection["track_id"]
+                    for detection in identity_results
+                    if "track_id" in detection
+                }
+                for detection in identity_results:
+                    track_id = detection.get("track_id")
+                    identity_name = detection.get("identity_name")
+                    if track_id is not None and isinstance(identity_name, str):
+                        self.state.set_face_id_name(track_id, identity_name)
+                self.state.set_active_face_ids(current_ids)
+                with self._result_lock:
+                    self._latest_face_identity_results = [
+                        detection.copy() for detection in identity_results
+                    ]
+            except Exception as exc:
+                logger.warning("Face ID worker error: %s", exc)
+
+            last_processed_time = request_time
+        logger.info("Face ID loop ended")
 
     def capture_loop(self):
         cap = self._camera
@@ -226,11 +294,41 @@ class CapturePipeline:
                 detections = results  # already extracted dicts from FaceEngine
                 show_headpose = self.state.face_show_headpose
                 show_labels = self.state.face_show_labels
+                if self.state.face_show_ids:
+                    with self._face_id_lock:
+                        self._face_id_input_frame = frame.copy()
+                        self._face_id_input_detections = [
+                            detection.copy() for detection in detections
+                        ]
+                        self._face_id_input_time = frame_time
+                    with self._result_lock:
+                        identity_results = [
+                            detection.copy()
+                            for detection in self._latest_face_identity_results
+                        ]
+                    self.model.face_engine.merge_face_identity_results(
+                        detections,
+                        identity_results,
+                    )
+                else:
+                    with self._face_id_lock:
+                        self._face_id_input_frame = None
+                        self._face_id_input_detections = []
+                        self._face_id_input_time = 0.0
+                    with self._result_lock:
+                        self._latest_face_identity_results = []
+                    self.state.set_active_face_ids(set())
+                with self._result_lock:
+                    self._latest_face_detections = [
+                        detection.copy() for detection in detections
+                    ]
                 draw_frame = frame.copy()
                 draw_frame = apply_visual_filter(
                     draw_frame,
                     self.state.visual_filter,
                 )
+                # Snapshot the name dict for thread safety.
+                name_snapshot = dict(self.state.face_id_names)
                 annotated = draw_face_mesh(
                     draw_frame,
                     detections,
@@ -241,6 +339,7 @@ class CapturePipeline:
                     font_scale=self.state.font_scale,
                     font_thickness=ft,
                     line_thickness=self.state.line_thickness,
+                    face_id_names=name_snapshot,
                 )
                 privacy_mode = self.state.privacy_mode
                 if privacy_mode != "None":
