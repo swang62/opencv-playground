@@ -61,16 +61,98 @@ def index():
         current_search_status = text
         search_status.set_text(text)
 
+    # Core webcam lifecycle (defined early so all controls can reference them)
+    def _start():
+        global pipeline, bundle
+        if bundle is None:
+            ui.notify("Models not loaded", type="warning")
+            return
+        if pipeline is not None:
+            return
+        pipeline = CapturePipeline(bundle, state)
+        pipeline.start()
+
+    def _stop():
+        global pipeline
+        if pipeline is not None:
+            pipeline.stop()
+            pipeline = None
+
     # ---- page chrome --------------------------------------------------------
     ui.add_head_html(f"""
     <style>
-      body {{ background: #0e0e14; }}
-      .q-page {{ background: linear-gradient(180deg, #0e0e14 0%, #16161f 100%); }}
+      body {{ background: #366576; }}
+      .q-page {{ background: linear-gradient(180deg, #1e4356 0%, #1e4356 100%); }}
       .q-card {{ border-radius: 12px; box-shadow: 0 2px 16px rgba(0,0,0,0.35) !important; }}
       .text-h4 {{ letter-spacing: -0.02em; }}
-      .q-tab {{ white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex-shrink: 1; min-width: 0; }}
-      .q-tab .q-tab__content {{ flex-direction: row; gap: 4px; }}
-      .q-tab .q-tab__icon {{ margin: 0; }}
+      .control-card {{
+        background: rgba(18, 29, 35, 0.72) !important;
+        border: 1px solid rgba(255, 255, 255, 0.09);
+        box-shadow: 0 18px 40px rgba(9, 15, 18, 0.22) !important;
+        backdrop-filter: blur(14px);
+      }}
+      .mode-tabs {{
+        padding: 8px;
+        background: rgba(255, 255, 255, 0.05);
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      }}
+      .mode-tabs .q-tabs__content {{ gap: 8px; }}
+      .mode-tabs .q-tab {{
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        flex-shrink: 1;
+        min-width: 0;
+        min-height: 46px;
+        border-radius: 14px;
+        color: rgba(236, 244, 247, 0.72);
+        transition: background 0.18s ease, color 0.18s ease, transform 0.18s ease;
+      }}
+      .mode-tabs .q-tab:hover {{
+        background: rgba(255, 255, 255, 0.06);
+        color: rgba(255, 255, 255, 0.96);
+      }}
+      .mode-tabs .q-tab--active {{
+        background: rgba(255, 255, 255, 0.12);
+        color: rgba(255, 255, 255, 0.98);
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08), 0 10px 20px rgba(0, 0, 0, 0.12);
+      }}
+      .mode-tabs .q-tab__indicator {{ display: none; }}
+      .mode-tabs .q-tab .q-tab__content {{ flex-direction: row; gap: 8px; padding: 6px 0; }}
+      .mode-tabs .q-tab .q-tab__icon {{ margin: 0; font-size: 1.35rem; }}
+      .clean-panels, .clean-panels .q-tab-panels, .clean-panels .q-panel {{ background: transparent !important; }}
+      .clean-panels .q-tab-panel {{ padding: 16px 16px 14px; }}
+      .premium-button {{
+        border-radius: 12px;
+        background: rgba(255, 255, 255, 0.12) !important;
+        color: #f7fbfc !important;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        box-shadow: 0 10px 22px rgba(0, 0, 0, 0.16);
+      }}
+      .premium-button:hover {{ background: rgba(255, 255, 255, 0.18) !important; }}
+      .subtle-button {{
+        border-radius: 12px;
+        background: rgba(255, 255, 255, 0.05) !important;
+        color: rgba(245, 250, 251, 0.92) !important;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+      }}
+      .subtle-button:hover {{ background: rgba(255, 255, 255, 0.08) !important; }}
+      .camera-toolbar {{
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 6px;
+        border-radius: 9999px;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        background: rgba(20, 20, 28, 0.96);
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+        overflow: hidden;
+      }}
+      .camera-toolbar .q-btn {{ border-radius: 9999px; min-width: 42px; min-height: 42px; }}
+      .camera-toolbar .q-icon {{ font-size: 1.4rem; }}
+      .camera-toolbar .q-btn--flat {{ color: #fff; }}
+      .camera-toolbar .q-btn--flat:hover {{ background: rgba(255, 255, 255, 0.08); }}
+      .camera-toolbar .q-btn--flat.q-btn--actionable.q-hoverable .q-focus-helper {{ display: none; }}
       .face-chip-img {{
         width: 100% !important;
         height: {config.FACE_CHIP_WIDTH}px !important;
@@ -103,7 +185,126 @@ def index():
                 ui.label(config.TITLE).classes(
                     "text-h4 text-weight-bold text-center w-full q-mb-md"
                 )
-                cam = ui.interactive_image().classes("w-full border-1 rounded")
+                cam = (
+                    ui.interactive_image(
+                        cross=f"{color_name_to_hex(state.overlay_color_name)}55",
+                        sanitize=False,
+                        events=["mousedown", "mousemove", "mouseup"],
+                    )
+                    .classes("w-full border-1 rounded")
+                    .style("user-select: none; touch-action: none;")
+                )
+
+                # -- Control bar (under webcam, pill-shaped, like a video player) --
+                roi_selection_active = False
+                roi_dragging = False
+                roi_drag_x1 = 0.0
+                roi_drag_y1 = 0.0
+                roi_overlay = cam.add_layer()
+
+                def update_roi_overlay():
+                    roi_overlay.content = ""
+
+                def update_crosshair_color():
+                    cam.props(f"cross={color_name_to_hex(state.overlay_color_name)}55")
+
+                def on_cam_mouse(e):
+                    nonlocal \
+                        roi_selection_active, \
+                        roi_dragging, \
+                        roi_drag_x1, \
+                        roi_drag_y1
+                    if not roi_selection_active:
+                        return
+                    if e.type == "mousedown" and e.button == 0:
+                        roi_dragging = True
+                        roi_drag_x1 = e.image_x
+                        roi_drag_y1 = e.image_y
+                        # Clear previous ROI while dragging
+                        state.clear_roi()
+                        update_roi_overlay()
+                    elif e.type == "mousemove" and roi_dragging:
+                        x1 = min(roi_drag_x1, e.image_x)
+                        y1 = min(roi_drag_y1, e.image_y)
+                        x2 = max(roi_drag_x1, e.image_x)
+                        y2 = max(roi_drag_y1, e.image_y)
+                        roi_overlay.content = (
+                            f'<rect x="{x1}" y="{y1}" '
+                            f'width="{x2 - x1}" height="{y2 - y1}" '
+                            f'fill="{color_name_to_hex(state.overlay_color_name)}33" '
+                            f'stroke="{color_name_to_hex(state.overlay_color_name)}" stroke-width="2" '
+                            f'stroke-dasharray="6,3" />'
+                        )
+                    elif e.type == "mouseup" and roi_dragging:
+                        roi_dragging = False
+                        x1 = min(roi_drag_x1, e.image_x)
+                        y1 = min(roi_drag_y1, e.image_y)
+                        x2 = max(roi_drag_x1, e.image_x)
+                        y2 = max(roi_drag_y1, e.image_y)
+                        if (x2 - x1) >= 16 and (y2 - y1) >= 16:
+                            state.set_roi(x1, y1, x2, y2)
+                        else:
+                            state.clear_roi()
+                        roi_overlay.content = ""
+
+                cam.on_mouse(on_cam_mouse)
+
+                def on_roi_zoom():
+                    nonlocal roi_selection_active
+                    if roi_selection_active:
+                        roi_selection_active = False
+                        roi_zoom_btn.props("flat round dense color=white size=sm")
+                        cam.style(
+                            "user-select: none; touch-action: none; cursor: default;"
+                        )
+                    else:
+                        roi_selection_active = True
+                        roi_zoom_btn.props("flat round dense color=amber size=sm")
+                        cam.style(
+                            "user-select: none; touch-action: none; cursor: crosshair; cursor: cell;"
+                        )
+
+                def on_reset_zoom():
+                    nonlocal roi_selection_active
+                    roi_selection_active = False
+                    roi_zoom_btn.props("flat round dense color=white size=sm")
+                    cam.style("user-select: none; touch-action: none; cursor: default;")
+                    state.clear_roi()
+                    update_roi_overlay()
+
+                def on_toggle_camera():
+                    if pipeline is None:
+                        _start()
+                    else:
+                        _stop()
+
+                def update_camera_toggle_button():
+                    if pipeline is None:
+                        camera_toggle_button.props(
+                            "flat round dense size=sm color=positive icon=play_arrow"
+                        )
+                    else:
+                        camera_toggle_button.props(
+                            "flat round dense size=sm color=negative icon=stop"
+                        )
+
+                with ui.row().classes("w-full justify-center q-mt-xs"):
+                    with ui.element("div").classes("camera-toolbar"):
+                        camera_toggle_button = ui.button(
+                            "", on_click=on_toggle_camera
+                        ).props("flat round dense size=sm color=negative icon=stop")
+                        camera_toggle_button.tooltip("Start/Stop Camera")
+                        roi_zoom_btn = ui.button(
+                            "", icon="crop_free", on_click=on_roi_zoom
+                        ).props("flat round dense size=sm color=white")
+                        roi_zoom_btn.tooltip("Select Zoom Area")
+                        ui.button(
+                            "", icon="zoom_out_map", on_click=on_reset_zoom
+                        ).props("flat round dense size=sm color=white").tooltip(
+                            "Reset Zoom"
+                        )
+                        update_crosshair_color()
+                        update_camera_toggle_button()
 
                 # -- Face ID chips (under webcam) --
                 state.load_face_id_names()
@@ -285,14 +486,16 @@ def index():
                     state.face_show_labels = enabled
                     state.face_show_ids = enabled
 
-                with ui.card().classes("w-full q-pa-none"):
-                    with ui.tabs().classes("w-full") as tabs:
+                with ui.card().classes("w-full q-pa-none control-card"):
+                    with ui.tabs().classes("w-full mode-tabs") as tabs:
                         ui.tab("Find", icon="search")
                         ui.tab("Detect", icon="visibility")
                         ui.tab("Face", icon="face")
                     tabs.on_value_change(lambda e: on_tab(e.value))
 
-                    with ui.tab_panels(tabs, value="Find").classes("w-full"):
+                    with ui.tab_panels(tabs, value="Find").classes(
+                        "w-full clean-panels"
+                    ):
                         with ui.tab_panel("Find"):
                             with ui.row().classes(IWN):
                                 search_inp = (
@@ -301,8 +504,8 @@ def index():
                                     .on("keydown.enter", lambda: do_search())
                                 )
                                 ui.button("Find", on_click=lambda: do_search()).props(
-                                    "flat color=primary dense"
-                                )
+                                    "unelevated no-caps"
+                                ).classes("premium-button")
                             search_status = ui.label("").classes(
                                 "text-caption text-grey q-mt-n2"
                             )
@@ -344,7 +547,7 @@ def index():
                                     min=config.CONFIDENCE_MIN,
                                     max=config.CONFIDENCE_MAX,
                                     step=config.CONFIDENCE_STEP,
-                                    value=config.DEFAULT_CONFIDENCE,
+                                    value=config.DEFAULT_THRESHOLD,
                                     on_change=lambda e: (
                                         state.set_confidence(e.value),
                                         thresh_label.set_text(
@@ -353,7 +556,7 @@ def index():
                                     ),
                                 ).classes(GROW)
                                 thresh_label = ui.label(
-                                    f"{config.DEFAULT_CONFIDENCE * 100:.0f}%"
+                                    f"{config.DEFAULT_THRESHOLD * 100:.0f}%"
                                 ).classes("text-bold q-ml-sm")
 
                         with ui.tab_panel("Face"):
@@ -383,18 +586,6 @@ def index():
                                     ),
                                 ).classes("w-full")
                             with ui.row().classes(IWN):
-                                ui.switch("Face mesh").bind_value_to(
-                                    state, "face_show_wireframe"
-                                )
-                            with ui.row().classes(IWN):
-                                ui.switch("Body mesh").bind_value_to(
-                                    state, "face_show_skeleton"
-                                )
-                            with ui.row().classes(IWN):
-                                ui.switch("Head direction").bind_value_to(
-                                    state, "face_show_headpose"
-                                )
-                            with ui.row().classes(IWN):
                                 ui.switch(
                                     "Tracking",
                                     value=state.face_show_labels
@@ -403,42 +594,37 @@ def index():
                                         bool(e.value)
                                     ),
                                 )
-
+                            with ui.row().classes(IWN):
+                                ui.switch("Face mesh").bind_value_to(
+                                    state, "face_show_wireframe"
+                                )
+                            with ui.row().classes(IWN):
+                                ui.switch("Body mesh").bind_value_to(
+                                    state, "face_show_skeleton"
+                                )
                 # -- Global settings below tabs --
-                with ui.card().classes("w-full q-pa-md"):
+                with ui.card().classes("w-full q-pa-md control-card"):
                     ui.label("Global settings").classes("text-bold text-h6")
 
                     # Webcam control strip
-                    with ui.row().classes("w-full items-center no-wrap gap-2"):
-                        webcam_btn = (
-                            ui.button("Refresh").props("outline").classes("flex-1")
-                        )
+                    # with ui.row().classes("w-full items-center no-wrap gap-2"):
+                    #     webcam_btn = (
+                    #         ui.button("Refresh").props("outline").classes("flex-1")
+                    #     )
 
-                        def on_start_restart():
-                            global pipeline, bundle
-                            if pipeline is not None:
-                                pipeline.stop()
-                                pipeline = None
-                            if bundle is None:
-                                ui.notify("Models not loaded", type="warning")
-                                webcam_btn.text = "Start"
-                                return
-                            pipeline = CapturePipeline(bundle, state)
-                            pipeline.start()
-                            webcam_btn.text = "Refresh"
+                    #     def on_webcam_start_restart():
+                    #         _start_restart()
+                    #         webcam_btn.text = "Refresh"
 
-                        webcam_btn.on_click(on_start_restart)
+                    #     webcam_btn.on_click(on_webcam_start_restart)
 
-                        def on_stop():
-                            global pipeline
-                            if pipeline is not None:
-                                pipeline.stop()
-                                pipeline = None
-                            webcam_btn.text = "Start"
+                    #     def on_webcam_stop():
+                    #         _stop()
+                    #         webcam_btn.text = "Start"
 
-                        ui.button("Stop", on_click=on_stop).props("outline").classes(
-                            "flex-1"
-                        )
+                    #     ui.button("Stop", on_click=on_webcam_stop).props(
+                    #         "outline"
+                    #     ).classes("flex-1")
 
                     with ui.row().classes(IWN):
                         ui.label("Font").classes(CAP)
@@ -483,6 +669,8 @@ def index():
     # ---- Timer-driven refresh ------------------------------------------------
     def refresh_all():
         nonlocal current_face_chip_key, current_frame_jpeg
+        update_crosshair_color()
+        update_camera_toggle_button()
         if pipeline is not None:
             jpeg = pipeline.get_latest_encoded_frame()
             if jpeg is not None and jpeg != current_frame_jpeg:

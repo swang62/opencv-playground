@@ -8,8 +8,8 @@ import threading
 import urllib.request
 from pathlib import Path
 
-import mediapipe as mp
 import cv2
+import mediapipe as mp
 import numpy as np
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
@@ -144,9 +144,8 @@ def _download_model(url: str, path: Path) -> Path:
     ctx = ssl.create_default_context()
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE
-    with urllib.request.urlopen(url, context=ctx) as resp:
-        with open(path, "wb") as f:
-            f.write(resp.read())
+    with urllib.request.urlopen(url, context=ctx) as resp, open(path, "wb") as f:
+        f.write(resp.read())
     logger.info("Cached at %s", path)
     return path
 
@@ -252,6 +251,9 @@ class BodyEngine:
                 running_mode=vision.RunningMode.VIDEO,
                 num_poses=1,
                 output_segmentation_masks=False,
+                min_pose_detection_confidence=config.FACE_DETECTION_CONFIDENCE,
+                min_pose_presence_confidence=config.FACE_DETECTION_CONFIDENCE,
+                min_tracking_confidence=config.FACE_DETECTION_CONFIDENCE,
             )
             self._pose = vision.PoseLandmarker.create_from_options(opts)
             logger.info("Pose Landmarker loaded (CPU)")

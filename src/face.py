@@ -17,13 +17,12 @@ from uniface.attribute import AgeGender
 from uniface.attribute.emotion import Emotion
 from uniface.constants import MobileFaceWeights, SCRFDWeights
 from uniface.detection import SCRFD
-from uniface.headpose import HeadPose
 from uniface.privacy import BlurFace
 from uniface.recognition import MobileFace
 from uniface.spoofing import MiniFASNet
 from uniface.stores import FAISS
 from uniface.tracking import BYTETracker
-from uniface.types import AttributeResult, EmotionResult, HeadPoseResult
+from uniface.types import AttributeResult, EmotionResult
 from uniface.types import Face as UniFace
 
 from src import config
@@ -242,7 +241,6 @@ def draw_face_mesh(
     frame: np.ndarray,
     faces,
     show_wireframe: bool = True,
-    show_headpose: bool = True,
     show_labels: bool = True,
     overlay_color=config.OVERLAY_COLOR,
     font_scale: float = config.FONT_SCALE,
@@ -250,7 +248,7 @@ def draw_face_mesh(
     line_thickness: int = config.OVERLAY_THICKNESS,
     face_id_names: dict[int, str] | None = None,
 ) -> np.ndarray:
-    """Draw face mesh, head pose arrow, and attribute labels on *frame*.
+    """Draw face mesh and attribute labels on *frame*.
 
     Parameters
     ----------
@@ -258,14 +256,11 @@ def draw_face_mesh(
         BGR frame (modified in-place for speed).
     faces : list[dict]
         Each dict has ``"landmarks"`` (478 (x, y) tuples), ``"bbox"``, and
-        optional ``"headpose"`` (pitch, yaw, roll), ``"age"``, ``"gender"``,
-        ``"emotion"`` keys.
+        optional ``"age"``, ``"gender"``, ``"emotion"`` keys.
     fps : float
         Current frames-per-second to overlay.
     show_wireframe : bool
         Whether to draw the 478-point mesh wireframe.
-    show_headpose : bool
-        Whether to draw the head pose direction arrow.
     show_labels : bool
         Whether to draw age/gender/emotion text.
     face_id_names : dict[int, str] | None
@@ -299,34 +294,12 @@ def draw_face_mesh(
                     lineType=cv2.LINE_AA,
                 )
 
-        cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
-        face_w = max(x2 - x1, 1)
-
-        if show_headpose and "headpose" in face:
-            hp = face["headpose"]
-
-            # Direction arrow
-            arrow_len = min(face_w * 0.8, 120)
-            dy = -arrow_len * np.sin(np.radians(hp["pitch"]))
-            dx = -arrow_len * np.sin(np.radians(hp["yaw"]))
-            ex = int(cx + dx)
-            ey = int(cy + dy)
-            cv2.arrowedLine(
-                frame,
-                (cx, cy),
-                (ex, ey),
-                (0, 200, 255),
-                5,
-                cv2.LINE_AA,
-                tipLength=0.25,
-            )
-
         if show_labels:
             parts = []
             if "age" in face:
                 parts.append(f"Age: {face['age']}")
             if "gender" in face:
-                parts.append(f"Gender: {face['gender'][0].upper()}")
+                parts.append(f"{face['gender']}")
             if "emotion" in face:
                 em = face["emotion"]
                 if em in ("Neutral", "neutral"):
@@ -337,7 +310,7 @@ def draw_face_mesh(
                 cx_text = (x1 + x2) // 2
                 (tw, th), _ = cv2.getTextSize(
                     label,
-                    cv2.FONT_HERSHEY_SIMPLEX,
+                    config.OVERLAY_FONT,
                     font_scale,
                     font_thickness,
                 )
@@ -347,7 +320,7 @@ def draw_face_mesh(
                     frame,
                     label,
                     (tx, ty),
-                    cv2.FONT_HERSHEY_SIMPLEX,
+                    config.OVERLAY_FONT,
                     font_scale,
                     (0, 255, 255),
                     font_thickness,
@@ -368,7 +341,7 @@ def draw_face_mesh(
             cx_s = (x1 + x2) // 2
             (sw, sh), _ = cv2.getTextSize(
                 spoof_label,
-                cv2.FONT_HERSHEY_SIMPLEX,
+                config.OVERLAY_FONT,
                 font_scale,
                 font_thickness,
             )
@@ -378,7 +351,7 @@ def draw_face_mesh(
                 frame,
                 spoof_label,
                 (sx, sy),
-                cv2.FONT_HERSHEY_SIMPLEX,
+                config.OVERLAY_FONT,
                 font_scale,
                 (0, 255, 255),
                 font_thickness,
@@ -424,7 +397,7 @@ class FaceEngine:
     Uses CPU delegate — the GPU (Metal) delegate crashes on macOS with
     ``kCVReturnPixelBufferNotMetalCompatible`` even with 4-channel input,
     and is unreliable beyond a few minutes.
-    UniFace models (headpose, age/gender, emotion) are lazy-loaded on
+    UniFace models (age/gender, emotion) are lazy-loaded on
     first face detection.
     """
 
@@ -432,7 +405,6 @@ class FaceEngine:
         self._landmarker = None
         self._lock = threading.Lock()
         self._frame_count = 0
-        self._headpose = None
         self._age_gender = None
         self._emotion = None
         self._spoofing = None
@@ -463,16 +435,16 @@ class FaceEngine:
                 output_face_blendshapes=False,
                 output_facial_transformation_matrixes=False,
                 num_faces=3,
+                min_face_detection_confidence=config.FACE_DETECTION_CONFIDENCE,
+                min_face_presence_confidence=config.FACE_DETECTION_CONFIDENCE,
+                min_tracking_confidence=config.FACE_DETECTION_CONFIDENCE,
             )
             self._landmarker = vision.FaceLandmarker.create_from_options(opts)
             logger.info("Face Landmarker loaded (CPU)")
 
     def warmup(self):
         self.ensure_loaded()
-        self._ensure_uniface(
-            need_headpose=True,
-            need_labels=True,
-        )
+        self._ensure_uniface(need_labels=True)
 
         dummy_frame = np.zeros((256, 256, 3), dtype=np.uint8)
         dummy_bbox = (64, 64, 192, 192)
@@ -485,14 +457,9 @@ class FaceEngine:
         ]
 
         try:
-            self.process(dummy_frame, show_headpose=False, show_labels=False)
+            self.process(dummy_frame, show_labels=False)
         except Exception as exc:
             logger.warning("Face landmarker warmup inference failed: %s", exc)
-
-        try:
-            self._estimate_headpose(dummy_frame[64:192, 64:192])
-        except Exception as exc:
-            logger.warning("Headpose warmup inference failed: %s", exc)
 
         try:
             self._predict_attributes(dummy_frame, dummy_bbox, dummy_points)
@@ -505,18 +472,8 @@ class FaceEngine:
             except Exception as exc:
                 logger.warning("Spoofing warmup inference failed: %s", exc)
 
-    def _ensure_uniface(
-        self,
-        need_headpose: bool = False,
-        need_labels: bool = False,
-    ):
+    def _ensure_uniface(self, need_labels: bool = False):
         """Lazy-load only the UniFace models needed by enabled features."""
-        if need_headpose and self._headpose is None:
-            with self._uniface_lock:
-                if self._headpose is None:
-                    logger.info("Loading UniFace headpose model...")
-                    self._headpose = HeadPose()  # type: ignore[no-untyped-call]
-
         if need_labels and self._age_gender is None:
             with self._uniface_lock:
                 if self._age_gender is None:
@@ -524,19 +481,6 @@ class FaceEngine:
                     self._age_gender = AgeGender()  # type: ignore[no-untyped-call]
                     self._emotion = Emotion()  # type: ignore[no-untyped-call]
                     self._spoofing = MiniFASNet()  # type: ignore[no-untyped-call]
-
-    def _estimate_headpose(self, face_crop):
-        try:
-            hp = self._headpose.estimate(face_crop)  # pyright: ignore
-            if isinstance(hp, HeadPoseResult):
-                return {
-                    "pitch": float(hp.pitch),
-                    "yaw": float(hp.yaw),
-                    "roll": float(hp.roll),
-                }
-        except Exception:
-            pass
-        return None
 
     def _predict_attributes(self, frame, bbox, pts5):
         """Return (age, gender_str, emotion_str) or None-filled tuple."""
@@ -601,6 +545,8 @@ class FaceEngine:
                     logger.info("Loading UniFace face ID detector (SCRFD 500M)...")
                     self._face_id_detector = SCRFD(
                         model_name=SCRFDWeights.SCRFD_500M_KPS,
+                        confidence_threshold=config.FACE_DETECTION_CONFIDENCE,
+                        input_size=config.FACE_DETECTION_INPUT_SIZE,
                     )
                     self._bytetracker = BYTETracker()
         if load_recognizer and self._face_recognizer is None:
@@ -838,7 +784,6 @@ class FaceEngine:
     def process(
         self,
         frame: np.ndarray,
-        show_headpose: bool = True,
         show_labels: bool = True,
     ):
         """Run face landmark detection on *frame*.
@@ -850,7 +795,6 @@ class FaceEngine:
                 "confidence": 0.95,
                 "bbox": (x1, y1, x2, y2),
                 "landmarks": [(x, y), ...],
-                "headpose": {"pitch": ..., "yaw": ..., "roll": ...},
                 "age": 32,
                 "gender": "Male",
                 "emotion": "Happy",
@@ -873,10 +817,7 @@ class FaceEngine:
         if not result.face_landmarks:
             return faces
 
-        self._ensure_uniface(
-            need_headpose=show_headpose,
-            need_labels=show_labels,
-        )
+        self._ensure_uniface(need_labels=show_labels)
 
         h, w = frame.shape[:2]
         for landmarks in result.face_landmarks:
@@ -893,13 +834,6 @@ class FaceEngine:
                 "bbox": (x1, y1, x2, y2),
                 "landmarks": pts,
             }
-
-            if show_headpose and self._headpose is not None and x2 > x1 and y2 > y1:
-                face_crop = frame[y1:y2, x1:x2]
-                if face_crop.size > 0:
-                    hp = self._estimate_headpose(face_crop)
-                    if hp is not None:
-                        face_dict["headpose"] = hp  # pyright: ignore
 
             if (
                 show_labels

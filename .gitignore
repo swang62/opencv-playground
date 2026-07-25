@@ -4,6 +4,7 @@
 *.bin
 weights/
 models/
+.codegraph/
 
 # Ultralytics runs / generated outputs
 runs/

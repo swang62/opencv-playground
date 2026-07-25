@@ -14,7 +14,7 @@ class AppState:
 
     mode: str = "find"
     submitted_target: str = ""
-    confidence: float = config.DEFAULT_CONFIDENCE
+    confidence: float = config.DEFAULT_THRESHOLD
     top_labels: int = 5
     camera_ready: bool = False
     models_ready: bool = False
@@ -22,7 +22,6 @@ class AppState:
     camera_error: str | None = None
     shutdown: bool = False
     face_show_wireframe: bool = True
-    face_show_headpose: bool = True
     face_show_labels: bool = False
     face_show_skeleton: bool = False
     face_show_ids: bool = False
@@ -30,10 +29,15 @@ class AppState:
     active_face_ids: set[int] = field(default_factory=set)
     privacy_mode: str = "None"
     visual_filter: str = "None"
-    mask_opacity: float = config.MASK_OPACITY
+    mask_opacity: float = config.DEFAULT_OPACITY
     overlay_color_name: str = "Green"
     font_scale: float = config.FONT_SCALE
     line_thickness: int = config.OVERLAY_THICKNESS
+    roi_active: bool = False
+    roi_x1: float = 0.0
+    roi_y1: float = 0.0
+    roi_x2: float = 0.0
+    roi_y2: float = 0.0
 
     _lock: threading.Lock = field(
         default_factory=threading.Lock, repr=False, compare=False
@@ -93,11 +97,23 @@ class AppState:
         # recognition; do not wipe the current session map on page refresh.
         return None
 
+    def set_roi(self, x1: float, y1: float, x2: float, y2: float):
+        with self._lock:
+            self.roi_active = True
+            self.roi_x1 = x1
+            self.roi_y1 = y1
+            self.roi_x2 = x2
+            self.roi_y2 = y2
+
+    def clear_roi(self):
+        with self._lock:
+            self.roi_active = False
+
 
 def get_predict_kwargs(state: AppState):
     """Build keyword arguments for model.predict() based on current state."""
     is_find = state.mode == "find"
-    conf = 0.1 if is_find else state.confidence
+    conf = config.FIND_CONFIDENCE if is_find else state.confidence
     return {
         "conf": conf,
         "verbose": False,

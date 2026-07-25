@@ -134,7 +134,6 @@ class ModelBundle:
         if mode == "face":
             return self.face_engine.process(
                 frame,
-                show_headpose=kwargs.get("show_headpose", True),
                 show_labels=kwargs.get("show_labels", True),
             )
         if mode == "find":

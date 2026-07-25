@@ -45,6 +45,7 @@ class CapturePipeline:
         self._camera = None
         self._latest_frame = None
         self._latest_frame_time = 0.0
+        self._latest_display_frame = None
         self._latest_encoded_frame = None
         self._latest_face_detections: list[dict] = []
         self._latest_face_identity_results: list[dict] = []
@@ -57,6 +58,11 @@ class CapturePipeline:
         self._capture_thread: threading.Thread | None = None
         self._inference_thread: threading.Thread | None = None
         self._face_id_thread: threading.Thread | None = None
+        self._detect_frame_num = 0
+        self._cached_top_labels: set[str] = set()
+        self._cached_label_detections: dict[str, list[dict]] = {}
+        self._cached_label_last_seen: dict[str, int] = {}
+        self._last_top_k: int = 5
         self.error: str | None = None
 
     def _get_first_frame(self, timeout_seconds: float = 5.0):
@@ -76,7 +82,6 @@ class CapturePipeline:
             for _ in range(3):
                 self.model.face_engine.process(
                     frame,
-                    show_headpose=False,
                     show_labels=False,
                 )
         except Exception as exc:
@@ -165,6 +170,10 @@ class CapturePipeline:
             return self._latest_encoded_frame
 
     def get_latest_frame_copy(self):
+        with self._result_lock:
+            display_frame = self._latest_display_frame
+        if display_frame is not None:
+            return display_frame.copy()
         with self._frame_lock:
             if self._latest_frame is None:
                 return None
@@ -269,12 +278,26 @@ class CapturePipeline:
             # switch modes between the predict call and the branch below.
             mode = self.state.mode
 
+            # ROI crop: if active, run inference and display on the selected region.
+            display_frame = frame
+            if self.state.roi_active:
+                h, w = frame.shape[:2]
+                rx1 = max(0, min(int(self.state.roi_x1), int(self.state.roi_x2)))
+                ry1 = max(0, min(int(self.state.roi_y1), int(self.state.roi_y2)))
+                rx2 = min(w, max(int(self.state.roi_x1), int(self.state.roi_x2)))
+                ry2 = min(h, max(int(self.state.roi_y1), int(self.state.roi_y2)))
+                if (rx2 - rx1) >= 16 and (ry2 - ry1) >= 16:
+                    display_frame = cv2.resize(
+                        frame[ry1:ry2, rx1:rx2].copy(),
+                        (w, h),
+                        interpolation=cv2.INTER_LINEAR,
+                    )
+
             try:
                 kwargs = get_predict_kwargs(self.state)
                 if mode == "face":
-                    kwargs["show_headpose"] = self.state.face_show_headpose
                     kwargs["show_labels"] = self.state.face_show_labels
-                results = self.model.predict(frame, mode, **kwargs)
+                results = self.model.predict(display_frame, mode, **kwargs)
                 consecutive_errors = 0
             except Exception as exc:
                 consecutive_errors += 1
@@ -294,11 +317,10 @@ class CapturePipeline:
 
             if mode == "face":
                 detections = results  # already extracted dicts from FaceEngine
-                show_headpose = self.state.face_show_headpose
                 show_labels = self.state.face_show_labels
                 if self.state.face_show_ids:
                     with self._face_id_lock:
-                        self._face_id_input_frame = frame.copy()
+                        self._face_id_input_frame = display_frame.copy()
                         self._face_id_input_detections = [
                             detection.copy() for detection in detections
                         ]
@@ -324,7 +346,7 @@ class CapturePipeline:
                     self._latest_face_detections = [
                         detection.copy() for detection in detections
                     ]
-                draw_frame = frame.copy()
+                draw_frame = display_frame.copy()
                 draw_frame = apply_visual_filter(
                     draw_frame,
                     self.state.visual_filter,
@@ -335,7 +357,6 @@ class CapturePipeline:
                     draw_frame,
                     detections,
                     show_wireframe=self.state.face_show_wireframe,
-                    show_headpose=show_headpose,
                     show_labels=show_labels,
                     overlay_color=oc,
                     font_scale=self.state.font_scale,
@@ -354,7 +375,7 @@ class CapturePipeline:
 
                 if self.state.face_show_skeleton:
                     try:
-                        poses = self.model.body_engine.process_pose(frame)
+                        poses = self.model.body_engine.process_pose(display_frame)
                         for pts in poses:
                             draw_pose_skeleton(
                                 annotated,
@@ -367,7 +388,7 @@ class CapturePipeline:
                         pass
 
                     try:
-                        hands = self.model.body_engine.process_hands(frame)
+                        hands = self.model.body_engine.process_hands(display_frame)
                         for pts in hands:
                             draw_hand_skeleton(
                                 annotated,
@@ -380,25 +401,95 @@ class CapturePipeline:
                         pass
 
             else:
+                extraction_confidence = (
+                    config.FIND_CONFIDENCE if mode == "find" else self.state.confidence
+                )
                 detections = extract_detections(
-                    results, self.state.confidence, need_masks=(mode == "find")
+                    results,
+                    extraction_confidence,
+                    need_masks=(mode == "find"),
                 )
 
                 if mode == "everything":
-                    label_best: dict[str, float] = {}
-                    for d in detections:
-                        lb = d["label"]
-                        label_best[lb] = max(label_best.get(lb, 0.0), d["confidence"])
-                    top_n = set(
-                        sorted(label_best, key=lambda k: label_best[k], reverse=True)[
-                            : self.state.top_labels
-                        ]
+                    frame_height, frame_width = display_frame.shape[:2]
+                    max_box_area = (
+                        frame_width * frame_height * config.MAX_DETECT_BOX_AREA_RATIO
                     )
-                    detections = [d for d in detections if d["label"] in top_n]
+                    detections = [
+                        detection
+                        for detection in detections
+                        if (detection["bbox"][2] - detection["bbox"][0])
+                        * (detection["bbox"][3] - detection["bbox"][1])
+                        <= max_box_area
+                    ]
+
+                    self._detect_frame_num += 1
+
+                    # Periodically recalculate which labels are top-N
+                    top_k_changed = self.state.top_labels != self._last_top_k
+                    if (
+                        not self._cached_top_labels
+                        or top_k_changed
+                        or self._detect_frame_num % config.CAMERA_UPDATE_INTERVAL == 0
+                    ):
+                        label_best: dict[str, float] = {}
+                        for d in detections:
+                            lb = d["label"]
+                            label_best[lb] = max(
+                                label_best.get(lb, 0.0), d["confidence"]
+                            )
+                        self._cached_top_labels = set(
+                            sorted(
+                                label_best,
+                                key=lambda k: label_best[k],
+                                reverse=True,
+                            )[: self.state.top_labels]
+                        )
+                        self._last_top_k = self.state.top_labels
+
+                    # Keep cache limited to the current top-N labels so the
+                    # slider directly controls what can be shown.
+                    self._cached_label_detections = {
+                        label: boxes
+                        for label, boxes in self._cached_label_detections.items()
+                        if label in self._cached_top_labels
+                    }
+                    self._cached_label_last_seen = {
+                        label: frame_num
+                        for label, frame_num in self._cached_label_last_seen.items()
+                        if label in self._cached_top_labels
+                    }
+
+                    # Group current frame detections by label
+                    current_by_label: dict[str, list[dict]] = {}
+                    for d in detections:
+                        if d["label"] in self._cached_top_labels:
+                            current_by_label.setdefault(d["label"], []).append(d)
+
+                    # Update cache with fresh detections for current top-N labels
+                    for label, boxes in current_by_label.items():
+                        self._cached_label_detections[label] = boxes
+                        self._cached_label_last_seen[label] = self._detect_frame_num
+
+                    # Temporal smoothing only within the current top-N set.
+                    merged = []
+                    for label in list(self._cached_top_labels):
+                        if label in current_by_label:
+                            merged.extend(current_by_label[label])
+                        elif (
+                            label in self._cached_label_detections
+                            and self._detect_frame_num
+                            - self._cached_label_last_seen.get(label, 0)
+                            < 10
+                        ):
+                            merged.extend(self._cached_label_detections[label])
+                        else:
+                            self._cached_label_detections.pop(label, None)
+                            self._cached_label_last_seen.pop(label, None)
+                    detections = merged
 
                 draw_frame = apply_visual_filter(
-                    frame.copy(),
-                    self.state.visual_filter,
+                    display_frame.copy(), self.state.visual_filter
                 )
                 annotated = annotate_frame(
                     draw_frame,
@@ -414,5 +505,6 @@ class CapturePipeline:
             success, jpeg = cv2.imencode(".jpg", annotated)
             if success:
                 with self._result_lock:
+                    self._latest_display_frame = display_frame.copy()
                     self._latest_encoded_frame = jpeg.tobytes()
         logger.info("Inference loop ended")
