@@ -4,11 +4,11 @@ import cv2
 
 # Model paths (relative to project root)
 MODELS_DIR = "models"
-PROMPTED_MODEL = f"{MODELS_DIR}/yoloe-26m-seg.pt"
-PROMPTFREE_MODEL = f"{MODELS_DIR}/yoloe-26m-seg-pf.pt"
+PROMPTED_MODEL = f"{MODELS_DIR}/yoloe-26l-seg.pt"
+PROMPTFREE_MODEL = f"{MODELS_DIR}/yoloe-26l-seg-pf.pt"
 
 # Inference size (pixels, squared). Lower = faster, less sensitive to small objects.
-INFERENCE_SIZE = 768
+INFERENCE_SIZE = 640
 
 # Camera
 CAMERA_INDEX = 0
@@ -25,7 +25,8 @@ TITLE = "Real-Time Object Detection"
 
 # UI defaults
 DEFAULT_THRESHOLD = 0.2
-DEFAULT_OPACITY = 0.2  # default highlight opacity in find mode
+DEFAULT_OPACITY = 0.2
+
 FIND_CONFIDENCE = 0.1
 CONFIDENCE_MIN = 0.05
 CONFIDENCE_MAX = 0.95
@@ -41,13 +42,8 @@ FONT_SCALE = 1.5
 FONT_THICKNESS = 2
 
 # Face mesh rendering
-FACE_ID_SIMILARITY_THRESHOLD = 0.3
-FACE_DETECTION_CONFIDENCE = 0.3
+FACE_ID_SIMILARITY_THRESHOLD = 0.5
 FACE_DETECTION_INPUT_SIZE = (640, 640)
-
-# ROI zoom overlay
-ROI_ZOOM_COLOR = (255, 255, 255)
-ROI_ZOOM_THICKNESS = 2
 
 # Page layout
 PAGE_MAX_WIDTH = 1200

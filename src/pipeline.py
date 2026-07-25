@@ -184,6 +184,9 @@ class CapturePipeline:
             for detection in self._latest_face_detections:
                 if detection.get("track_id") == track_id:
                     return detection.copy()
+            for detection in self._latest_face_identity_results:
+                if detection.get("track_id") == track_id:
+                    return detection.copy()
         return None
 
     def face_id_loop(self):

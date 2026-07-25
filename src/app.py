@@ -569,22 +569,15 @@ def index():
                                         state, "privacy_mode", e.value
                                     ),
                                 ).props("dense spread").classes("w-full")
+                            ui.label("Image filter").classes(CAP)
                             with ui.row().classes(IWN):
-                                ui.select(
-                                    [
-                                        "None",
-                                        "Sketch",
-                                        "Thermal",
-                                        "CRT",
-                                        "Comic",
-                                        "Invert",
-                                    ],
+                                ui.toggle(
+                                    ["None", "Heat", "CRT", "Comic", "Invert"],
                                     value="None",
-                                    label="Image filter",
                                     on_change=lambda e: setattr(
                                         state, "visual_filter", e.value
                                     ),
-                                ).classes("w-full")
+                                ).props("dense spread").classes("w-full")
                             with ui.row().classes(IWN):
                                 ui.switch(
                                     "Tracking",

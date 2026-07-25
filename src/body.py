@@ -251,9 +251,6 @@ class BodyEngine:
                 running_mode=vision.RunningMode.VIDEO,
                 num_poses=1,
                 output_segmentation_masks=False,
-                min_pose_detection_confidence=config.FACE_DETECTION_CONFIDENCE,
-                min_pose_presence_confidence=config.FACE_DETECTION_CONFIDENCE,
-                min_tracking_confidence=config.FACE_DETECTION_CONFIDENCE,
             )
             self._pose = vision.PoseLandmarker.create_from_options(opts)
             logger.info("Pose Landmarker loaded (CPU)")

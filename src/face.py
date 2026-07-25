@@ -15,10 +15,10 @@ from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 from uniface.attribute import AgeGender
 from uniface.attribute.emotion import Emotion
-from uniface.constants import MobileFaceWeights, SCRFDWeights
+from uniface.constants import ArcFaceWeights, SCRFDWeights
 from uniface.detection import SCRFD
 from uniface.privacy import BlurFace
-from uniface.recognition import MobileFace
+from uniface.recognition import ArcFace
 from uniface.spoofing import MiniFASNet
 from uniface.stores import FAISS
 from uniface.tracking import BYTETracker
@@ -435,9 +435,6 @@ class FaceEngine:
                 output_face_blendshapes=False,
                 output_facial_transformation_matrixes=False,
                 num_faces=3,
-                min_face_detection_confidence=config.FACE_DETECTION_CONFIDENCE,
-                min_face_presence_confidence=config.FACE_DETECTION_CONFIDENCE,
-                min_tracking_confidence=config.FACE_DETECTION_CONFIDENCE,
             )
             self._landmarker = vision.FaceLandmarker.create_from_options(opts)
             logger.info("Face Landmarker loaded (CPU)")
@@ -545,16 +542,15 @@ class FaceEngine:
                     logger.info("Loading UniFace face ID detector (SCRFD 500M)...")
                     self._face_id_detector = SCRFD(
                         model_name=SCRFDWeights.SCRFD_500M_KPS,
-                        confidence_threshold=config.FACE_DETECTION_CONFIDENCE,
                         input_size=config.FACE_DETECTION_INPUT_SIZE,
                     )
                     self._bytetracker = BYTETracker()
         if load_recognizer and self._face_recognizer is None:
             with self._uniface_lock:
                 if self._face_recognizer is None:
-                    logger.info("Loading UniFace MobileFace recognizer (MNET_V2)...")
-                    self._face_recognizer = MobileFace(
-                        model_name=MobileFaceWeights.MNET_V2,
+                    logger.info("Loading UniFace ArcFace recognizer (RESNET)...")
+                    self._face_recognizer = ArcFace(
+                        model_name=ArcFaceWeights.RESNET,
                     )
         if load_recognizer:
             self._ensure_face_store()

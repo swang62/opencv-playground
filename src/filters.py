@@ -8,13 +8,7 @@ def apply_visual_filter(frame: np.ndarray, mode: str) -> np.ndarray:
     if mode == "None":
         return frame
 
-    if mode == "Sketch":
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        blur = cv2.GaussianBlur(255 - gray, (15, 15), 0)
-        sketch = cv2.divide(gray, 255 - blur + 1, scale=200)
-        return cv2.cvtColor(sketch.astype(np.uint8), cv2.COLOR_GRAY2BGR)
-
-    if mode == "Thermal":
+    if mode in ("Heat", "Thermal"):
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         return cv2.applyColorMap(gray, cv2.COLORMAP_JET)
 
@@ -49,8 +43,7 @@ def apply_visual_filter(frame: np.ndarray, mode: str) -> np.ndarray:
 
 FILTER_NAMES = [
     "None",
-    "Sketch",
-    "Thermal",
+    "Heat",
     "CRT",
     "Comic",
     "Invert",
