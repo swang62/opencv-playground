@@ -441,8 +441,8 @@ class FaceEngine:
         self._face_id_detector = None
         self._bytetracker = None
         self._face_recognizer = None
-        self._known_face_embeddings: dict[str, list[float]] = {}
-        self._track_identity_cache: dict[int, str] = {}
+        self._known_face_identities: dict[str, dict[str, object]] = {}
+        self._track_identity_cache: dict[int, dict[str, str]] = {}
 
     def ensure_loaded(self):
         if self._landmarker is not None:
@@ -462,7 +462,7 @@ class FaceEngine:
                 running_mode=vision.RunningMode.VIDEO,
                 output_face_blendshapes=False,
                 output_facial_transformation_matrixes=False,
-                num_faces=2,
+                num_faces=3,
             )
             self._landmarker = vision.FaceLandmarker.create_from_options(opts)
             logger.info("Face Landmarker loaded (CPU)")
@@ -572,26 +572,55 @@ class FaceEngine:
         return age, gender, emotion
 
     def _load_known_face_embeddings(self):
-        if self._known_face_embeddings:
+        if self._known_face_identities:
             return
         try:
             if FACE_IDENTITIES_PATH.exists():
                 with FACE_IDENTITIES_PATH.open() as file_handle:
                     data = json.load(file_handle)
-                self._known_face_embeddings = {
-                    str(name): [float(value) for value in embedding]
-                    for name, embedding in data.items()
-                    if isinstance(embedding, list)
-                }
+                identities = data.get("identities") if isinstance(data, dict) else None
+                if isinstance(identities, list):
+                    self._known_face_identities = {
+                        str(identity["id"]): {
+                            "name": str(identity["name"]),
+                            "embedding": [
+                                float(value) for value in identity.get("embedding", [])
+                            ],
+                        }
+                        for identity in identities
+                        if isinstance(identity, dict)
+                        and identity.get("id")
+                        and identity.get("name")
+                        and isinstance(identity.get("embedding"), list)
+                    }
         except Exception as exc:
             logger.warning("Failed to load face identities: %s", exc)
 
     def _save_known_face_embeddings(self):
         try:
             with FACE_IDENTITIES_PATH.open("w") as file_handle:
-                json.dump(self._known_face_embeddings, file_handle, indent=2)
+                json.dump(
+                    {
+                        "identities": [
+                            {
+                                "id": identity_id,
+                                "name": str(identity["name"]),
+                                "embedding": identity["embedding"],
+                            }
+                            for identity_id, identity in self._known_face_identities.items()
+                        ]
+                    },
+                    file_handle,
+                    indent=2,
+                )
         except Exception as exc:
             logger.warning("Failed to save face identities: %s", exc)
+
+    def _get_identity_by_name(self, name: str):
+        for identity_id, identity in self._known_face_identities.items():
+            if identity.get("name") == name:
+                return identity_id, identity
+        return None, None
 
     def _ensure_face_id_models(self, load_recognizer: bool = False):
         """Lazy-load SCRFD/ByteTrack, and MobileFace only when needed."""
@@ -606,9 +635,9 @@ class FaceEngine:
         if load_recognizer and self._face_recognizer is None:
             with self._uniface_lock:
                 if self._face_recognizer is None:
-                    logger.info("Loading UniFace MobileFace recognizer (MNET_025)...")
+                    logger.info("Loading UniFace MobileFace recognizer (MNET_V2)...")
                     self._face_recognizer = MobileFace(
-                        model_name=MobileFaceWeights.MNET_025,
+                        model_name=MobileFaceWeights.MNET_V2,
                     )
                     self._load_known_face_embeddings()
 
@@ -645,10 +674,11 @@ class FaceEngine:
             dtype=np.float32,
         )
 
-    def _recognize_detection(self, frame: np.ndarray, detection: dict) -> str | None:
-        if not self._known_face_embeddings:
-            return None
+    def _recognize_detection(self, frame: np.ndarray, detection: dict):
         self._ensure_face_id_models(load_recognizer=True)
+        if not self._known_face_identities:
+            logger.info("Face recognition skipped: no saved identities")
+            return None
         assert self._face_recognizer is not None
         try:
             embedding = self._face_recognizer.get_normalized_embedding(
@@ -659,9 +689,16 @@ class FaceEngine:
             logger.warning("Face recognition failed: %s", exc)
             return None
 
-        best_name = None
+        logger.info(
+            "Face recognition scanning %d saved identities",
+            len(self._known_face_identities),
+        )
+        best_identity = None
         best_similarity = config.FACE_ID_SIMILARITY_THRESHOLD
-        for name, stored_embedding in self._known_face_embeddings.items():
+        for identity_id, identity in self._known_face_identities.items():
+            stored_embedding = identity.get("embedding")
+            if not isinstance(stored_embedding, list):
+                continue
             similarity = float(
                 compute_similarity(
                     np.array(stored_embedding, dtype=np.float32),
@@ -669,10 +706,27 @@ class FaceEngine:
                     normalized=True,
                 )
             )
+            logger.info(
+                "Face similarity: candidate=%s name=%s score=%.4f threshold=%.4f",
+                identity_id,
+                identity.get("name", ""),
+                similarity,
+                config.FACE_ID_SIMILARITY_THRESHOLD,
+            )
             if similarity > best_similarity:
                 best_similarity = similarity
-                best_name = name
-        return best_name
+                best_identity = {
+                    "identity_name": str(identity.get("name", "")),
+                }
+        if best_identity is None:
+            logger.info("Face recognition found no match above threshold")
+        else:
+            logger.info(
+                "Face recognition matched name=%s score=%.4f",
+                best_identity["identity_name"],
+                best_similarity,
+            )
+        return best_identity
 
     def enroll_identity(
         self, name: str, frame: np.ndarray, detection: dict, track_id: int
@@ -683,19 +737,34 @@ class FaceEngine:
             frame,
             self._get_five_point_landmarks(detection["landmarks"]),
         )
-        self._known_face_embeddings[name] = embedding.astype(float).tolist()
-        self._track_identity_cache[track_id] = name
+        identity_id, _ = self._get_identity_by_name(name)
+        if identity_id is None:
+            identity_id = name
+        self._known_face_identities[identity_id] = {
+            "name": name,
+            "embedding": embedding.astype(float).tolist(),
+        }
+        self._track_identity_cache[track_id] = {"identity_name": name}
         self._save_known_face_embeddings()
+        logger.info(
+            "Saved face identity: identity=%s name=%s track=%s total_saved=%d",
+            identity_id,
+            name,
+            track_id,
+            len(self._known_face_identities),
+        )
 
     def remove_identity(self, name: str, track_id: int | None = None):
-        self._known_face_embeddings.pop(name, None)
+        identity_id, _ = self._get_identity_by_name(name)
+        if identity_id is not None:
+            self._known_face_identities.pop(identity_id, None)
         if track_id is not None:
             self._track_identity_cache.pop(track_id, None)
         else:
             self._track_identity_cache = {
-                cached_track_id: cached_name
-                for cached_track_id, cached_name in self._track_identity_cache.items()
-                if cached_name != name
+                cached_track_id: cached_identity
+                for cached_track_id, cached_identity in self._track_identity_cache.items()
+                if cached_identity.get("identity_name") != name
             }
         self._save_known_face_embeddings()
 
@@ -711,8 +780,8 @@ class FaceEngine:
             if "track_id" in detection
         }
         self._track_identity_cache = {
-            track_id: name
-            for track_id, name in self._track_identity_cache.items()
+            track_id: identity
+            for track_id, identity in self._track_identity_cache.items()
             if track_id in active_track_ids
         }
 
@@ -720,14 +789,15 @@ class FaceEngine:
             track_id = detection.get("track_id")
             if track_id is None:
                 continue
-            cached_name = self._track_identity_cache.get(int(track_id))
-            if cached_name is not None:
-                detection["identity_name"] = cached_name
+            cached_identity = self._track_identity_cache.get(int(track_id))
+            if cached_identity is not None:
+                detection["identity_name"] = cached_identity["identity_name"]
                 continue
-            identity_name = self._recognize_detection(frame, detection)
-            if identity_name is not None:
-                self._track_identity_cache[int(track_id)] = identity_name
-                detection["identity_name"] = identity_name
+            matched_identity = self._recognize_detection(frame, detection)
+            if matched_identity is not None:
+                self._track_identity_cache[int(track_id)] = matched_identity
+                if matched_identity["identity_name"]:
+                    detection["identity_name"] = matched_identity["identity_name"]
 
         return detections
 

@@ -139,6 +139,7 @@ def index():
                         for track_id in active_ids:
                             name = state.face_id_names.get(track_id, "")
                             label = name or f"ID: {track_id}"
+                            tooltip_text = f"track_id: {track_id}"
                             with (
                                 ui.element("div")
                                 .classes(
@@ -148,6 +149,7 @@ def index():
                                     "gap: 6px; border: 1px solid rgba(255,255,255,0.15);"
                                 )
                             ):
+                                ui.tooltip(tooltip_text)
                                 ui.label(label.upper()).classes("text-caption")
                                 if name:
                                     ui.button(
@@ -182,6 +184,10 @@ def index():
                         set_search_status("Face Mesh Active")
                     else:
                         state.set_mode("find")
+
+                def set_facial_recognition(enabled: bool):
+                    state.face_show_labels = enabled
+                    state.face_show_ids = enabled
 
                 with ui.card().classes("w-full q-pa-none"):
                     with ui.tabs().classes("w-full") as tabs:
@@ -293,12 +299,13 @@ def index():
                                     state, "face_show_headpose"
                                 )
                             with ui.row().classes(IWN):
-                                ui.switch("Labels").bind_value_to(
-                                    state, "face_show_labels"
-                                )
-                            with ui.row().classes(IWN):
-                                ui.switch("Face IDs").bind_value_to(
-                                    state, "face_show_ids"
+                                ui.switch(
+                                    "Tracking",
+                                    value=state.face_show_labels
+                                    and state.face_show_ids,
+                                    on_change=lambda e: set_facial_recognition(
+                                        bool(e.value)
+                                    ),
                                 )
 
                 # -- Global settings below tabs --

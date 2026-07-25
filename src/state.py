@@ -23,7 +23,7 @@ class AppState:
     shutdown: bool = False
     face_show_wireframe: bool = True
     face_show_headpose: bool = True
-    face_show_labels: bool = True
+    face_show_labels: bool = False
     face_show_skeleton: bool = False
     face_show_ids: bool = False
     face_id_names: dict[int, str] = field(default_factory=dict)
@@ -85,8 +85,9 @@ class AppState:
             self.face_id_names.pop(track_id, None)
 
     def load_face_id_names(self):
-        with self._lock:
-            self.face_id_names = {}
+        # Names are persisted in identities.json and reattached after
+        # recognition; do not wipe the current session map on page refresh.
+        return None
 
 
 def get_predict_kwargs(state: AppState):
