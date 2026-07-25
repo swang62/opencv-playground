@@ -6,7 +6,7 @@ PROMPTED_MODEL = f"{MODELS_DIR}/yoloe-26m-seg.pt"
 PROMPTFREE_MODEL = f"{MODELS_DIR}/yoloe-26m-seg-pf.pt"
 
 # Inference size (pixels, squared). Lower = faster, less sensitive to small objects.
-INFERENCE_SIZE = 480
+INFERENCE_SIZE = 768
 
 # Camera
 CAMERA_INDEX = 0

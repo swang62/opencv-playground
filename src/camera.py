@@ -108,7 +108,7 @@ if HAVE_NATIVE_CAMERA:
             output.setSampleBufferDelegate_queue_(self._receiver, queue)
 
             self._session = AV.AVCaptureSession.alloc().init()
-            self._session.setSessionPreset_(AV.AVCaptureSessionPreset1280x720)
+            self._session.setSessionPreset_(AV.AVCaptureSessionPreset1920x1080)
             self._session.addInput_(input_obj)
             self._session.addOutput_(output)
             self._session.startRunning()
@@ -151,4 +151,6 @@ def create_camera(camera_id: int):
     cap = cv2.VideoCapture(camera_id)
     if not cap.isOpened():
         raise RuntimeError(f"Camera {camera_id} failed to open")
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
     return cap

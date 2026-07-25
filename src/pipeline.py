@@ -96,6 +96,7 @@ class CapturePipeline:
 
     def start(self):
         """Open the camera and start capture / inference threads."""
+        self.state.reset_shutdown()
         logger.info("Starting capture pipeline (camera=%s)", self._camera_input)
         if isinstance(self._camera_input, int):
             try:
@@ -156,6 +157,7 @@ class CapturePipeline:
         if self._camera is not None:
             self._camera.release()
             logger.info("Camera released")
+        self.state.set_camera_ready(False)
 
     def get_latest_encoded_frame(self) -> bytes | None:
         """Return the most recent annotated image bytes, or None."""

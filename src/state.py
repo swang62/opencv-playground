@@ -72,6 +72,10 @@ class AppState:
         with self._lock:
             self.shutdown = True
 
+    def reset_shutdown(self):
+        with self._lock:
+            self.shutdown = False
+
     def set_active_face_ids(self, ids: set[int]):
         with self._lock:
             self.active_face_ids = ids

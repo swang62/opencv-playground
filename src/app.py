@@ -6,6 +6,9 @@ import base64
 import logging
 import threading
 import warnings
+from pathlib import Path
+
+import cv2
 
 warnings.filterwarnings("ignore", message=".*resource_tracker.*")
 
@@ -13,7 +16,7 @@ from nicegui import app as napp
 from nicegui import ui
 
 from src import config
-from src.models import get_device, load_model_bundle
+from src.models import ModelBundle, get_device, load_model_bundle
 from src.pipeline import CapturePipeline
 from src.state import COLOR_MAP, AppState, color_name_to_hex
 from src.utils import normalize_query
@@ -23,7 +26,19 @@ logger = logging.getLogger(__name__)
 # Module-level references shared between UI and lifecycle hooks.
 state: AppState = AppState()
 pipeline: CapturePipeline | None = None
+bundle: ModelBundle | None = None
 device_str: str = "unknown"
+THUMBNAILS_DIR = Path(config.MODELS_DIR) / "screenshots"
+
+
+def _face_thumbnail_url(name: str) -> str | None:
+    """Return a data URL for the face thumbnail, or None if missing."""
+    path = THUMBNAILS_DIR / f"{name}.jpg"
+    if not path.exists():
+        return None
+    data = path.read_bytes()
+    b64 = base64.b64encode(data).decode("ascii")
+    return f"data:image/jpeg;base64,{b64}"
 
 
 @ui.page("/")
@@ -49,13 +64,37 @@ def index():
     # ---- page chrome --------------------------------------------------------
     ui.add_head_html("""
     <style>
+      body { background: #0e0e14; }
+      .q-page { background: linear-gradient(180deg, #0e0e14 0%, #16161f 100%); }
+      .q-card { border-radius: 12px; box-shadow: 0 2px 16px rgba(0,0,0,0.35) !important; }
+      .text-h4 { letter-spacing: -0.02em; }
       .q-tab { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex-shrink: 1; min-width: 0; }
       .q-tab .q-tab__content { flex-direction: row; gap: 4px; }
       .q-tab .q-tab__icon { margin: 0; }
+      .face-chip-img {
+        width: 100% !important;
+        height: 88px !important;
+        object-fit: cover;
+        display: block;
+        flex-shrink: 0;
+      }
+      .face-chip-action-btn {
+        opacity: 0;
+        transition: opacity 0.15s;
+        background: rgba(10, 10, 14, 0.95) !important;
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        color: #fff !important;
+      }
+      .face-chip-container:hover .face-chip-action-btn { opacity: 1; }
+      .face-chip-placeholder { width: 100%; height: 88px; background: #fff; flex-shrink: 0; }
     </style>
     """)
 
-    with ui.element("div").classes(FW).style("max-width: 98%; margin: 24px auto;"):
+    with (
+        ui.element("div")
+        .classes(FW)
+        .style("max-width: 1200px; margin: 0 auto; padding: 24px 20px;")
+    ):
         with ui.row().classes("w-full flex-wrap items-start"):
             # -- webcam (left on desktop, top on mobile) --
             with ui.column().classes("flex-1 min-w-0"):
@@ -107,6 +146,22 @@ def index():
                         detection,
                         track_id,
                     )
+                    # Save face thumbnail
+                    x1, y1, x2, y2 = map(int, detection["bbox"])
+                    thumb = frame[y1:y2, x1:x2]
+                    if thumb.size > 0:
+                        scale = min(64 / thumb.shape[1], 64 / thumb.shape[0])
+                        new_w = max(1, int(thumb.shape[1] * scale))
+                        new_h = max(1, int(thumb.shape[0] * scale))
+                        thumb_resized = cv2.resize(thumb, (new_w, new_h))
+                        THUMBNAILS_DIR.mkdir(parents=True, exist_ok=True)
+                        safe_name = "".join(
+                            c if c.isalnum() or c in "-_" else "_"
+                            for c in normalized_name
+                        )
+                        cv2.imwrite(
+                            str(THUMBNAILS_DIR / f"{safe_name}.jpg"), thumb_resized
+                        )
                     state.set_face_id_name(track_id, normalized_name)
                     add_name_input.value = ""
                     pending_face_track_id = None
@@ -131,6 +186,13 @@ def index():
                         return
                     pipeline.model.face_engine.remove_identity(name, track_id)
                     state.clear_face_id_name(track_id)
+                    # Remove thumbnail
+                    safe_name = "".join(
+                        c if c.isalnum() or c in "-_" else "_" for c in name
+                    )
+                    thumb_path = THUMBNAILS_DIR / f"{safe_name}.jpg"
+                    if thumb_path.exists():
+                        thumb_path.unlink()
                     current_face_chip_key = ()
 
                 def rebuild_face_id_chips():
@@ -138,36 +200,64 @@ def index():
                     active_ids = sorted(state.active_face_ids)
                     with face_id_chip_row:
                         for track_id in active_ids:
-                            name = state.face_id_names.get(track_id, "")
-                            label = name or f"ID: {track_id}"
+                            face_name = state.face_id_names.get(track_id, "")
+                            label = face_name or f"ID: {track_id}"
                             tooltip_text = f"track_id: {track_id}"
                             with (
                                 ui.element("div")
                                 .classes(
-                                    "row items-center no-wrap q-px-sm q-py-xs rounded-borders bg-grey-9 text-white"
+                                    "face-chip-container column no-wrap bg-grey-9 text-white"
                                 )
                                 .style(
-                                    "gap: 6px; border: 1px solid rgba(255,255,255,0.15);"
+                                    "gap: 0; border: 1px solid rgba(255,255,255,0.15); width: 88px; height: 112px; flex-shrink: 0; overflow: hidden; border-radius: 8px;"
                                 )
                             ):
                                 ui.tooltip(tooltip_text)
-                                ui.label(label).classes("text-caption")
-                                if name:
-                                    ui.button(
-                                        "",
-                                        icon="close",
-                                        on_click=lambda _, tid=track_id: (
-                                            delete_face_name(tid)
-                                        ),
-                                    ).props("dense flat round size=sm color=white")
+                                thumb_url = (
+                                    _face_thumbnail_url(face_name)
+                                    if face_name
+                                    else None
+                                )
+                                if thumb_url:
+                                    ui.element("img").classes(
+                                        "face-chip-img flex-none"
+                                    ).props(f'src="{thumb_url}"')
                                 else:
-                                    ui.button(
-                                        "",
-                                        icon="add",
-                                        on_click=lambda _, tid=track_id: open_add_name(
-                                            tid
-                                        ),
-                                    ).props("dense flat round size=sm color=white")
+                                    ui.element("div").classes("face-chip-placeholder")
+                                with ui.element("div").classes(
+                                    "row items-center no-wrap q-px-xs flex-1 min-w-0 relative"
+                                ):
+                                    ui.label(label).classes(
+                                        "text-caption ellipsis w-full min-w-0"
+                                    )
+                                    if face_name:
+                                        ui.button(
+                                            "",
+                                            icon="close",
+                                            on_click=lambda _, tid=track_id: (
+                                                delete_face_name(tid)
+                                            ),
+                                        ).props(
+                                            "dense flat round size=sm color=red"
+                                        ).classes(
+                                            "face-chip-action-btn flex-none"
+                                        ).style(
+                                            "position: absolute; right: 0; top: 50%; transform: translateY(-50%);"
+                                        )
+                                    else:
+                                        ui.button(
+                                            "",
+                                            icon="add",
+                                            on_click=lambda _, tid=track_id: (
+                                                open_add_name(tid)
+                                            ),
+                                        ).props(
+                                            "dense flat round size=sm color=green"
+                                        ).classes(
+                                            "face-chip-action-btn flex-none"
+                                        ).style(
+                                            "position: absolute; right: 0; top: 50%; transform: translateY(-50%);"
+                                        )
 
             # -- controls (right on desktop, bottom on mobile) --
             with ui.column().classes("flex-none"):
@@ -282,7 +372,7 @@ def index():
                                         "Invert",
                                     ],
                                     value="None",
-                                    label="Video filter",
+                                    label="Image filter",
                                     on_change=lambda e: setattr(
                                         state, "visual_filter", e.value
                                     ),
@@ -312,6 +402,39 @@ def index():
                 # -- Global settings below tabs --
                 with ui.card().classes("w-full q-pa-md"):
                     ui.label("Global settings").classes("text-bold text-h6")
+
+                    # Webcam control strip
+                    with ui.row().classes("w-full items-center no-wrap gap-2"):
+                        webcam_btn = (
+                            ui.button("Refresh").props("outline").classes("flex-1")
+                        )
+
+                        def on_start_restart():
+                            global pipeline, bundle
+                            if pipeline is not None:
+                                pipeline.stop()
+                                pipeline = None
+                            if bundle is None:
+                                ui.notify("Models not loaded", type="warning")
+                                webcam_btn.text = "Start"
+                                return
+                            pipeline = CapturePipeline(bundle, state)
+                            pipeline.start()
+                            webcam_btn.text = "Refresh"
+
+                        webcam_btn.on_click(on_start_restart)
+
+                        def on_stop():
+                            global pipeline
+                            if pipeline is not None:
+                                pipeline.stop()
+                                pipeline = None
+                            webcam_btn.text = "Start"
+
+                        ui.button("Stop", on_click=on_stop).props("outline").classes(
+                            "flex-1"
+                        )
+
                     with ui.row().classes(IWN):
                         ui.label("Font").classes(CAP)
                         font_slider = ui.slider(
@@ -404,7 +527,7 @@ def index():
 
 def start_services():
     """Load models, create pipeline, start capture and inference."""
-    global pipeline, device_str
+    global pipeline, device_str, bundle
 
     device_str = get_device()
     logger.info("Starting services (device=%s)", device_str)
@@ -415,6 +538,7 @@ def start_services():
         state.set_models_error(None)
         logger.info("Models loaded successfully")
     except Exception as exc:
+        bundle = None
         msg = f"Model loading failed: {exc}"
         logger.error(msg)
         state.set_models_error(msg)
