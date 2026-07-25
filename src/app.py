@@ -86,6 +86,7 @@ def index():
                 def save_face_name():
                     nonlocal current_face_chip_key, pending_face_track_id
                     name = (add_name_input.value or "").strip()
+                    normalized_name = name.upper()
                     track_id = pending_face_track_id
                     if track_id is None:
                         return
@@ -101,12 +102,12 @@ def index():
                         ui.notify("Selected face is no longer active", type="warning")
                         return
                     pipeline.model.face_engine.enroll_identity(
-                        name,
+                        normalized_name,
                         frame,
                         detection,
                         track_id,
                     )
-                    state.set_face_id_name(track_id, name)
+                    state.set_face_id_name(track_id, normalized_name)
                     add_name_input.value = ""
                     pending_face_track_id = None
                     current_face_chip_key = ()
@@ -150,7 +151,7 @@ def index():
                                 )
                             ):
                                 ui.tooltip(tooltip_text)
-                                ui.label(label.upper()).classes("text-caption")
+                                ui.label(label).classes("text-caption")
                                 if name:
                                     ui.button(
                                         "",

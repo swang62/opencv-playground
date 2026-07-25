@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import ssl
 import threading
@@ -18,11 +17,11 @@ from uniface.attribute import AgeGender
 from uniface.attribute.emotion import Emotion
 from uniface.constants import MobileFaceWeights, SCRFDWeights
 from uniface.detection import SCRFD
-from uniface.face_utils import compute_similarity
 from uniface.headpose import HeadPose
 from uniface.privacy import BlurFace
 from uniface.recognition import MobileFace
 from uniface.spoofing import MiniFASNet
+from uniface.stores import FAISS
 from uniface.tracking import BYTETracker
 from uniface.types import AttributeResult, EmotionResult, HeadPoseResult
 from uniface.types import Face as UniFace
@@ -33,7 +32,7 @@ logger = logging.getLogger(__name__)
 
 MODEL_DIR = Path(config.MODELS_DIR)
 MODEL_FILE = MODEL_DIR / "face_landmarker_v2.task"
-FACE_IDENTITIES_PATH = MODEL_DIR / "identities.json"
+FACE_IDENTITIES_PATH = MODEL_DIR / "identities"
 MODEL_URL = (
     "https://storage.googleapis.com/mediapipe-models/"
     "face_landmarker/face_landmarker/float16/latest/face_landmarker.task"
@@ -361,7 +360,7 @@ def draw_face_mesh(
                 tid = face["track_id"]
                 name = face_id_names.get(tid, "") if face_id_names else ""
                 if name:
-                    spoof_label = f"{name.upper()} | " + spoof_label
+                    spoof_label = f"{name} | " + spoof_label
                 else:
                     spoof_label = f"ID: {tid} | " + spoof_label
 
@@ -441,7 +440,7 @@ class FaceEngine:
         self._face_id_detector = None
         self._bytetracker = None
         self._face_recognizer = None
-        self._known_face_identities: dict[str, dict[str, object]] = {}
+        self._face_store = None
         self._track_identity_cache: dict[int, dict[str, str]] = {}
 
     def ensure_loaded(self):
@@ -571,56 +570,27 @@ class FaceEngine:
 
         return age, gender, emotion
 
-    def _load_known_face_embeddings(self):
-        if self._known_face_identities:
-            return
-        try:
-            if FACE_IDENTITIES_PATH.exists():
-                with FACE_IDENTITIES_PATH.open() as file_handle:
-                    data = json.load(file_handle)
-                identities = data.get("identities") if isinstance(data, dict) else None
-                if isinstance(identities, list):
-                    self._known_face_identities = {
-                        str(identity["id"]): {
-                            "name": str(identity["name"]),
-                            "embedding": [
-                                float(value) for value in identity.get("embedding", [])
-                            ],
-                        }
-                        for identity in identities
-                        if isinstance(identity, dict)
-                        and identity.get("id")
-                        and identity.get("name")
-                        and isinstance(identity.get("embedding"), list)
-                    }
-        except Exception as exc:
-            logger.warning("Failed to load face identities: %s", exc)
-
-    def _save_known_face_embeddings(self):
-        try:
-            with FACE_IDENTITIES_PATH.open("w") as file_handle:
-                json.dump(
-                    {
-                        "identities": [
-                            {
-                                "id": identity_id,
-                                "name": str(identity["name"]),
-                                "embedding": identity["embedding"],
-                            }
-                            for identity_id, identity in self._known_face_identities.items()
-                        ]
-                    },
-                    file_handle,
-                    indent=2,
+    def _ensure_face_store(self):
+        if self._face_store is not None:
+            return self._face_store
+        with self._uniface_lock:
+            if self._face_store is not None:
+                return self._face_store
+            FACE_IDENTITIES_PATH.mkdir(parents=True, exist_ok=True)
+            store = FAISS(db_path=str(FACE_IDENTITIES_PATH))
+            loaded = store.load()
+            logger.info(
+                "Face identity store ready: path=%s loaded=%s size=%s",
+                FACE_IDENTITIES_PATH,
+                loaded,
+                len(store),
+            )
+            if not loaded:
+                logger.info(
+                    "Face identity store is empty; save a face to create entries"
                 )
-        except Exception as exc:
-            logger.warning("Failed to save face identities: %s", exc)
-
-    def _get_identity_by_name(self, name: str):
-        for identity_id, identity in self._known_face_identities.items():
-            if identity.get("name") == name:
-                return identity_id, identity
-        return None, None
+            self._face_store = store
+            return self._face_store
 
     def _ensure_face_id_models(self, load_recognizer: bool = False):
         """Lazy-load SCRFD/ByteTrack, and MobileFace only when needed."""
@@ -639,7 +609,8 @@ class FaceEngine:
                     self._face_recognizer = MobileFace(
                         model_name=MobileFaceWeights.MNET_V2,
                     )
-                    self._load_known_face_embeddings()
+        if load_recognizer:
+            self._ensure_face_store()
 
     @staticmethod
     def _bbox_iou(bbox_a, bbox_b) -> float:
@@ -675,9 +646,13 @@ class FaceEngine:
         )
 
     def _recognize_detection(self, frame: np.ndarray, detection: dict):
-        self._ensure_face_id_models(load_recognizer=True)
-        if not self._known_face_identities:
-            logger.info("Face recognition skipped: no saved identities")
+        try:
+            self._ensure_face_id_models(load_recognizer=True)
+            store = self._ensure_face_store()
+        except Exception as exc:
+            logger.warning("Face recognition store unavailable: %s", exc)
+            return None
+        if len(store) == 0:
             return None
         assert self._face_recognizer is not None
         try:
@@ -691,73 +666,55 @@ class FaceEngine:
 
         logger.info(
             "Face recognition scanning %d saved identities",
-            len(self._known_face_identities),
+            len(store),
         )
-        best_identity = None
-        best_similarity = config.FACE_ID_SIMILARITY_THRESHOLD
-        for identity_id, identity in self._known_face_identities.items():
-            stored_embedding = identity.get("embedding")
-            if not isinstance(stored_embedding, list):
-                continue
-            similarity = float(
-                compute_similarity(
-                    np.array(stored_embedding, dtype=np.float32),
-                    embedding,
-                    normalized=True,
-                )
-            )
-            logger.info(
-                "Face similarity: candidate=%s name=%s score=%.4f threshold=%.4f",
-                identity_id,
-                identity.get("name", ""),
-                similarity,
-                config.FACE_ID_SIMILARITY_THRESHOLD,
-            )
-            if similarity > best_similarity:
-                best_similarity = similarity
-                best_identity = {
-                    "identity_name": str(identity.get("name", "")),
-                }
-        if best_identity is None:
+        result, similarity = store.search(
+            embedding,
+            threshold=config.FACE_ID_SIMILARITY_THRESHOLD,
+        )
+        logger.info(
+            "Face similarity search: result=%s score=%.4f threshold=%.4f",
+            result,
+            similarity,
+            config.FACE_ID_SIMILARITY_THRESHOLD,
+        )
+        if result is None:
             logger.info("Face recognition found no match above threshold")
-        else:
-            logger.info(
-                "Face recognition matched name=%s score=%.4f",
-                best_identity["identity_name"],
-                best_similarity,
-            )
-        return best_identity
+            return None
+        matched_name = str(result.get("name", ""))
+        logger.info(
+            "Face recognition matched name=%s score=%.4f",
+            matched_name,
+            similarity,
+        )
+        return {"identity_name": matched_name}
 
     def enroll_identity(
         self, name: str, frame: np.ndarray, detection: dict, track_id: int
     ):
         self._ensure_face_id_models(load_recognizer=True)
+        store = self._ensure_face_store()
         assert self._face_recognizer is not None
         embedding = self._face_recognizer.get_normalized_embedding(
             frame,
             self._get_five_point_landmarks(detection["landmarks"]),
         )
-        identity_id, _ = self._get_identity_by_name(name)
-        if identity_id is None:
-            identity_id = name
-        self._known_face_identities[identity_id] = {
-            "name": name,
-            "embedding": embedding.astype(float).tolist(),
-        }
+        store.remove("name", name)
+        store.add(embedding, {"name": name})
+        store.save()
         self._track_identity_cache[track_id] = {"identity_name": name}
-        self._save_known_face_embeddings()
         logger.info(
-            "Saved face identity: identity=%s name=%s track=%s total_saved=%d",
-            identity_id,
+            "Saved face identity: name=%s track=%s total_saved=%d",
             name,
             track_id,
-            len(self._known_face_identities),
+            len(store),
         )
 
     def remove_identity(self, name: str, track_id: int | None = None):
-        identity_id, _ = self._get_identity_by_name(name)
-        if identity_id is not None:
-            self._known_face_identities.pop(identity_id, None)
+        store = self._ensure_face_store()
+        removed = store.remove("name", name)
+        if removed:
+            store.save()
         if track_id is not None:
             self._track_identity_cache.pop(track_id, None)
         else:
@@ -766,7 +723,6 @@ class FaceEngine:
                 for cached_track_id, cached_identity in self._track_identity_cache.items()
                 if cached_identity.get("identity_name") != name
             }
-        self._save_known_face_embeddings()
 
     def apply_face_identities(
         self, frame: np.ndarray, detections: list[dict]
@@ -793,7 +749,13 @@ class FaceEngine:
             if cached_identity is not None:
                 detection["identity_name"] = cached_identity["identity_name"]
                 continue
-            matched_identity = self._recognize_detection(frame, detection)
+            try:
+                matched_identity = self._recognize_detection(frame, detection)
+            except Exception as exc:
+                logger.warning(
+                    "Face recognition lookup failed for track=%s: %s", track_id, exc
+                )
+                matched_identity = None
             if matched_identity is not None:
                 self._track_identity_cache[int(track_id)] = matched_identity
                 if matched_identity["identity_name"]:
