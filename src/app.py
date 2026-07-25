@@ -311,7 +311,7 @@ def index():
 
                 # -- Global settings below tabs --
                 with ui.card().classes("w-full q-pa-md"):
-                    ui.label("Global").classes("text-bold text-h6")
+                    ui.label("Global settings").classes("text-bold text-h6")
                     with ui.row().classes(IWN):
                         ui.label("Font").classes(CAP)
                         font_slider = ui.slider(

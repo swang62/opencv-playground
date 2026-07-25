@@ -39,143 +39,164 @@ MODEL_URL = (
 )
 
 # ---------------------------------------------------------------------------
-# Face mesh connections — these define the 478-point wireframe topology.
-# Indices are from the MediaPipe Face Mesh canonical model.
-# Grouped by facial feature for a clean wireframe overlay.
+# Face mesh connections — (start, end) index pairs per feature from the
+# MediaPipe Face Mesh canonical 478-point topology (FaceLandmarksConnections).
+# Using connection pairs (not ordered point lists) because several features
+# have disconnected segments that polylines would bridge incorrectly.
 # ---------------------------------------------------------------------------
 
 FACE_OVAL = [
-    10,
-    338,
-    297,
-    332,
-    284,
-    251,
-    389,
-    356,
-    454,
-    323,
-    361,
-    288,
-    397,
-    365,
-    379,
-    378,
-    400,
-    377,
-    152,
-    148,
-    176,
-    149,
-    150,
-    136,
-    172,
-    58,
-    132,
-    93,
-    234,
-    127,
-    162,
-    21,
-    54,
-    103,
-    67,
-    109,
-    10,
+    (10, 338),
+    (338, 297),
+    (297, 332),
+    (332, 284),
+    (284, 251),
+    (251, 389),
+    (389, 356),
+    (356, 454),
+    (454, 323),
+    (323, 361),
+    (361, 288),
+    (288, 397),
+    (397, 365),
+    (365, 379),
+    (379, 378),
+    (378, 400),
+    (400, 377),
+    (377, 152),
+    (152, 148),
+    (148, 176),
+    (176, 149),
+    (149, 150),
+    (150, 136),
+    (136, 172),
+    (172, 58),
+    (58, 132),
+    (132, 93),
+    (93, 234),
+    (234, 127),
+    (127, 162),
+    (162, 21),
+    (21, 54),
+    (54, 103),
+    (103, 67),
+    (67, 109),
+    (109, 10),
 ]
 
 LEFT_EYE = [
-    33,
-    7,
-    163,
-    144,
-    145,
-    153,
-    154,
-    155,
-    133,
-    173,
-    157,
-    158,
-    159,
-    160,
-    161,
-    246,
-    33,
+    (33, 7),
+    (7, 163),
+    (163, 144),
+    (144, 145),
+    (145, 153),
+    (153, 154),
+    (154, 155),
+    (155, 133),
+    (33, 246),
+    (246, 161),
+    (161, 160),
+    (160, 159),
+    (159, 158),
+    (158, 157),
+    (157, 173),
+    (173, 133),
 ]
 
 RIGHT_EYE = [
-    362,
-    382,
-    381,
-    380,
-    374,
-    373,
-    390,
-    249,
-    263,
-    466,
-    388,
-    387,
-    386,
-    385,
-    384,
-    398,
-    362,
+    (263, 249),
+    (249, 390),
+    (390, 373),
+    (373, 374),
+    (374, 380),
+    (380, 381),
+    (381, 382),
+    (382, 362),
+    (263, 466),
+    (466, 388),
+    (388, 387),
+    (387, 386),
+    (386, 385),
+    (385, 384),
+    (384, 398),
+    (398, 362),
 ]
 
-LEFT_BROW = [46, 53, 52, 65, 55, 70, 63, 105, 66, 107]
-RIGHT_BROW = [276, 283, 282, 295, 285, 300, 293, 334, 296, 336]
-
-NOSE_BRIDGE = [168, 6, 197, 195, 5, 4, 45]
-NOSE_BOTTOM = [2, 97, 98, 327, 326, 45]
-
-LIPS_OUTER = [
-    61,
-    146,
-    91,
-    181,
-    84,
-    17,
-    314,
-    405,
-    321,
-    375,
-    291,
-    409,
-    270,
-    269,
-    267,
-    0,
-    37,
-    39,
-    40,
-    185,
-    61,
+LEFT_BROW = [
+    (276, 283),
+    (283, 282),
+    (282, 295),
+    (295, 285),
+    (300, 293),
+    (293, 334),
+    (334, 296),
+    (296, 336),
 ]
 
-LIPS_INNER = [
-    78,
-    191,
-    80,
-    81,
-    82,
-    13,
-    312,
-    311,
-    310,
-    415,
-    308,
-    324,
-    318,
-    402,
-    317,
-    14,
-    87,
-    178,
-    88,
-    95,
-    78,
+RIGHT_BROW = [
+    (46, 53),
+    (53, 52),
+    (52, 65),
+    (65, 55),
+    (70, 63),
+    (63, 105),
+    (105, 66),
+    (66, 107),
+]
+
+NOSE = [
+    (168, 6),
+    (6, 197),
+    (197, 195),
+    (195, 5),
+    (5, 4),
+    (4, 1),
+    (1, 19),
+    (19, 94),
+    (94, 2),
+]
+
+LIPS = [
+    (61, 146),
+    (146, 91),
+    (91, 181),
+    (181, 84),
+    (84, 17),
+    (17, 314),
+    (314, 405),
+    (405, 321),
+    (321, 375),
+    (375, 291),
+    (61, 185),
+    (185, 40),
+    (40, 39),
+    (39, 37),
+    (37, 0),
+    (0, 267),
+    (267, 269),
+    (269, 270),
+    (270, 409),
+    (409, 291),
+    (78, 95),
+    (95, 88),
+    (88, 178),
+    (178, 87),
+    (87, 14),
+    (14, 317),
+    (317, 402),
+    (402, 318),
+    (318, 324),
+    (324, 308),
+    (78, 191),
+    (191, 80),
+    (80, 81),
+    (81, 82),
+    (82, 13),
+    (13, 312),
+    (312, 311),
+    (311, 310),
+    (310, 415),
+    (415, 308),
 ]
 
 ALL_CONTOURS = [
@@ -184,17 +205,14 @@ ALL_CONTOURS = [
     RIGHT_EYE,
     LEFT_BROW,
     RIGHT_BROW,
-    NOSE_BRIDGE,
-    NOSE_BOTTOM,
-    LIPS_OUTER,
-    LIPS_INNER,
+    NOSE,
+    LIPS,
 ]
 
-# Build flattened list of (i, j) index pairs for OpenCV polylines.
-FACE_CONNECTIONS = []
-for contour in ALL_CONTOURS:
-    pts = np.array(contour, dtype=np.int32).reshape(-1, 1, 1)
-    FACE_CONNECTIONS.append(pts)
+# Unique landmark indices used for eye-center averaging in 5-point landmark
+# computation (not for drawing).
+LEFT_EYE_INDICES = sorted({i for pair in LEFT_EYE for i in pair})
+RIGHT_EYE_INDICES = sorted({i for pair in RIGHT_EYE for i in pair})
 
 
 def download_model() -> Path:
@@ -218,22 +236,6 @@ def download_model() -> Path:
 # ---------------------------------------------------------------------------
 # Face drawing helpers
 # ---------------------------------------------------------------------------
-
-# Per-contour colors in BGR. Order matches ALL_CONTOURS.
-CONTOUR_COLORS = [
-    (0, 255, 0),  # FACE_OVAL - pure green outline
-    (255, 255, 0),  # LEFT_EYE - cyan
-    (255, 255, 0),  # RIGHT_EYE - cyan
-    (0, 255, 100),  # LEFT_BROW - warm green
-    (0, 255, 100),  # RIGHT_BROW - warm green
-    (100, 255, 0),  # NOSE_BRIDGE - yellow-green
-    (100, 255, 0),  # NOSE_BOTTOM - yellow-green
-    (0, 150, 255),  # LIPS_OUTER - orange
-    (0, 150, 255),  # LIPS_INNER - orange
-]
-
-# Precompute a color per landmark index (0-477) — all the same green.
-LANDMARK_COLORS = [config.OVERLAY_COLOR] * 478
 
 
 def draw_face_mesh(
@@ -275,18 +277,17 @@ def draw_face_mesh(
         x1, y1, x2, y2 = map(int, bbox)
 
         if show_wireframe:
-            for ci, conn in enumerate(FACE_CONNECTIONS):
-                pixel_pts = np.array(
-                    [(pts[i][0], pts[i][1]) for i in conn.flatten() if i < len(pts)],
-                    dtype=np.int32,
-                ).reshape(-1, 1, 2)
-                cv2.polylines(
-                    frame,
-                    [pixel_pts],
-                    isClosed=False,
-                    color=overlay_color,
-                    thickness=line_thickness,
-                )
+            for conn_group in ALL_CONTOURS:
+                for i, j in conn_group:
+                    if i < len(pts) and j < len(pts):
+                        cv2.line(
+                            frame,
+                            pts[i],
+                            pts[j],
+                            overlay_color,
+                            line_thickness,
+                            cv2.LINE_AA,
+                        )
 
             for i in range(0, len(pts), config.FACE_POINT_STRIDE):
                 cv2.circle(
@@ -631,12 +632,16 @@ class FaceEngine:
         return np.array(
             [
                 (
-                    sum(landmarks[index][0] for index in LEFT_EYE) // len(LEFT_EYE),
-                    sum(landmarks[index][1] for index in LEFT_EYE) // len(LEFT_EYE),
+                    sum(landmarks[i][0] for i in LEFT_EYE_INDICES)
+                    // len(LEFT_EYE_INDICES),
+                    sum(landmarks[i][1] for i in LEFT_EYE_INDICES)
+                    // len(LEFT_EYE_INDICES),
                 ),
                 (
-                    sum(landmarks[index][0] for index in RIGHT_EYE) // len(RIGHT_EYE),
-                    sum(landmarks[index][1] for index in RIGHT_EYE) // len(RIGHT_EYE),
+                    sum(landmarks[i][0] for i in RIGHT_EYE_INDICES)
+                    // len(RIGHT_EYE_INDICES),
+                    sum(landmarks[i][1] for i in RIGHT_EYE_INDICES)
+                    // len(RIGHT_EYE_INDICES),
                 ),
                 landmarks[1],
                 landmarks[61],
@@ -905,14 +910,16 @@ class FaceEngine:
             ):
                 self._mediapipe_5pt = [
                     (
-                        sum(pts[i][0] for i in LEFT_EYE)
-                        // len(LEFT_EYE),  # left eye center
-                        sum(pts[i][1] for i in LEFT_EYE) // len(LEFT_EYE),
+                        sum(pts[i][0] for i in LEFT_EYE_INDICES)
+                        // len(LEFT_EYE_INDICES),  # left eye center
+                        sum(pts[i][1] for i in LEFT_EYE_INDICES)
+                        // len(LEFT_EYE_INDICES),
                     ),
                     (
-                        sum(pts[i][0] for i in RIGHT_EYE)
-                        // len(RIGHT_EYE),  # right eye center
-                        sum(pts[i][1] for i in RIGHT_EYE) // len(RIGHT_EYE),
+                        sum(pts[i][0] for i in RIGHT_EYE_INDICES)
+                        // len(RIGHT_EYE_INDICES),  # right eye center
+                        sum(pts[i][1] for i in RIGHT_EYE_INDICES)
+                        // len(RIGHT_EYE_INDICES),
                     ),
                     pts[1],  # nose tip
                     pts[61],  # left mouth corner
