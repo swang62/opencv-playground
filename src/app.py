@@ -39,7 +39,7 @@ bundle: ModelBundle | None = None
 device_str: str = "unknown"
 _current_video_source: VideoFilePlayer | YouTubeSource | None = None
 _session_count: int = 0
-THUMBNAILS_DIR = Path(config.MODELS_DIR) / "screenshots"
+THUMBNAILS_DIR = Path(config.MODELS_DIR) / "thumbnails"
 BODY_THUMBNAILS_DIR = Path(config.BODY_THUMBNAILS_DIR)
 
 

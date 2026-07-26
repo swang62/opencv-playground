@@ -59,14 +59,14 @@ brew install yt-dlp     # macOS
 
 ## Troubleshooting
 
-| Symptom                | Likely cause                                                |
-| ---------------------- | ----------------------------------------------------------- |
-| "Camera not ready"     | Camera is in use, permission was denied, or no webcam       |
-| "Model loading failed" | First-run model download failed or corrupted                |
-| No detections          | Confidence threshold is too high or environment is too dark |
-| No faces               | Tracking is disabled or people/faces too small              |
-| Low FPS                | Make sure no other programs are using CPU/GPU               |
-| YouTube fails          | `yt-dlp` is missing, or YouTube cookies are unavailable     |
+| Symptom              | Likely cause                                                |
+| -------------------- | ----------------------------------------------------------- |
+| Camera not ready     | Camera is in use, permission was denied, or no webcam       |
+| Model loading failed | First-run model download failed or corrupted                |
+| No detections        | Confidence threshold is too high or environment is too dark |
+| No faces             | Tracking is disabled or people/faces too small              |
+| Low FPS              | Make sure no other programs are using CPU/GPU               |
+| YouTube fails        | `yt-dlp` is missing, or YouTube cookies are unavailable     |
 
 ## Acknowledgements
 
