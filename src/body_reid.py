@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import threading
+from collections import deque
 from pathlib import Path
 
 import cv2
@@ -41,6 +42,7 @@ class BodyIdEngine:
         self._store = None  # FAISS gallery
         self._track_identity_cache: dict[int, dict[str, str]] = {}
         self._track_snapshots: dict[int, dict] = {}
+        self._track_embedding_buffers: dict[int, deque] = {}
 
     # ------------------------------------------------------------------
     # Public API
@@ -109,23 +111,54 @@ class BodyIdEngine:
                 "detection": det,
             }
 
-        # Purge cache entries for departed tracks (tracker no longer reports them)
+        # Purge entries for departed tracks
         stale_ids = set(self._track_identity_cache) - active_track_ids
         for tid in stale_ids:
             self._track_identity_cache.pop(tid, None)
         stale_snapshots = set(self._track_snapshots) - active_track_ids
         for tid in stale_snapshots:
             self._track_snapshots.pop(tid, None)
+        stale_buffers = set(self._track_embedding_buffers) - active_track_ids
+        for tid in stale_buffers:
+            self._track_embedding_buffers.pop(tid, None)
 
-        # One Re-ID lookup per newly observed track
+        # Minimum bbox area for Re-ID (reject partial limb detections)
+        frame_area = frame.shape[0] * frame.shape[1]
+        min_area = frame_area * config.BODY_REID_MIN_AREA_RATIO
+
         for det in detections:
+            bbox = det.get("bbox")
+            if not bbox or len(bbox) < 4:
+                continue
+            area = (bbox[2] - bbox[0]) * (bbox[3] - bbox[1])
+            is_small = area < min_area
+
             tid = det["track_id"]
+
+            if is_small:
+                continue
+
             cached = self._track_identity_cache.get(tid)
             if cached is not None:
                 det["identity_name"] = cached["identity_name"]
                 continue
 
-            recognized = self._recognize(frame, det)
+            crop = _crop_person(frame, det["bbox"])
+            if crop is None:
+                continue
+            embedding = self._embed(crop)
+            if embedding is None:
+                continue
+
+            buf = self._track_embedding_buffers.setdefault(
+                tid, deque(maxlen=config.REID_EMBEDDING_BUFFER_SIZE)
+            )
+            buf.append(embedding)
+            if len(buf) < config.REID_EMBEDDING_BUFFER_SIZE:
+                continue
+
+            mean_emb = np.mean(list(buf), axis=0)
+            recognized = self._search_store(mean_emb)
             if recognized is not None:
                 self._track_identity_cache[tid] = recognized
                 if recognized.get("identity_name"):
@@ -162,6 +195,11 @@ class BodyIdEngine:
             )
             return
 
+        buf = self._track_embedding_buffers.get(track_id)
+        if buf:
+            all_embs = list(buf) + [embedding]
+            embedding = np.mean(all_embs, axis=0)
+
         store = self._ensure_store()
         store.remove("name", name)
         store.add(embedding, {"name": name})
@@ -187,12 +225,14 @@ class BodyIdEngine:
             store.save()
         if track_id is not None:
             self._track_identity_cache.pop(track_id, None)
+            self._track_embedding_buffers.pop(track_id, None)
         else:
             self._track_identity_cache = {
                 tid: ident
                 for tid, ident in self._track_identity_cache.items()
                 if ident.get("identity_name") != name
             }
+            self._track_embedding_buffers.clear()
 
     # ------------------------------------------------------------------
     # Internal — model loading
@@ -278,21 +318,13 @@ class BodyIdEngine:
             logger.warning("OSNet embedding failed: %s", exc)
             return None
 
-    def _recognize(self, frame: np.ndarray, detection: dict) -> dict | None:
-        """Search the body FAISS gallery for *detection*.
+    def _search_store(self, embedding: np.ndarray) -> dict | None:
+        """Search the body FAISS gallery for *embedding*.
 
         Returns ``{"identity_name": name}`` on match, or None.
         """
         store = self._ensure_store()
         if len(store) == 0:
-            return None
-
-        crop = _crop_person(frame, detection["bbox"])
-        if crop is None:
-            return None
-
-        embedding = self._embed(crop)
-        if embedding is None:
             return None
 
         result, similarity = store.search(

@@ -6,6 +6,7 @@ import logging
 import ssl
 import threading
 import urllib.request
+from collections import deque
 from pathlib import Path
 
 import cv2
@@ -415,6 +416,10 @@ class FaceEngine:
         self._face_recognizer = None
         self._face_store = None
         self._track_identity_cache: dict[int, dict[str, str]] = {}
+        self._track_embedding_buffers: dict[int, deque] = {}
+        self._smoothed_ages: list[
+            tuple
+        ] = []  # [(bbox, smoothed_age), ...] for EMA across frames
 
     def ensure_loaded(self):
         if self._landmarker is not None:
@@ -569,6 +574,30 @@ class FaceEngine:
         area_b = max(1, (bx2 - bx1) * (by2 - by1))
         return inter / (area_a + area_b - inter + 1e-6)
 
+    def _smooth_age(self, bbox: tuple, raw_age: float) -> int:
+        best_iou = 0.0
+        best_age = None
+        best_idx = -1
+        for idx, (prev_bbox, prev_age) in enumerate(self._smoothed_ages):
+            iou = self._bbox_iou(bbox, prev_bbox)
+            if iou > best_iou:
+                best_iou = iou
+                best_age = prev_age
+                best_idx = idx
+        if best_iou > 0.3 and best_age is not None:
+            smoothed = (
+                1 - config.AGE_SMOOTHING_ALPHA
+            ) * best_age + config.AGE_SMOOTHING_ALPHA * raw_age
+        else:
+            smoothed = float(raw_age)
+        new_entry = (bbox, smoothed)
+        if best_idx >= 0:
+            self._smoothed_ages[best_idx] = new_entry
+        else:
+            self._smoothed_ages.append(new_entry)
+            self._smoothed_ages = self._smoothed_ages[-4:]
+        return round(smoothed)
+
     @staticmethod
     def _get_five_point_landmarks(landmarks: list[tuple[int, int]]) -> np.ndarray:
         return np.array(
@@ -592,7 +621,7 @@ class FaceEngine:
             dtype=np.float32,
         )
 
-    def _recognize_detection(self, frame: np.ndarray, detection: dict):
+    def _recognize_detection(self, frame: np.ndarray, detection: dict, track_id: int):
         try:
             self._ensure_face_id_models(load_recognizer=True)
             store = self._ensure_face_store()
@@ -611,12 +640,22 @@ class FaceEngine:
             logger.warning("Face recognition failed: %s", exc)
             return None
 
+        buf = self._track_embedding_buffers.setdefault(
+            track_id, deque(maxlen=config.REID_EMBEDDING_BUFFER_SIZE)
+        )
+        buf.append(embedding)
+        if len(buf) < config.REID_EMBEDDING_BUFFER_SIZE:
+            return None
+
+        mean_emb = np.mean(list(buf), axis=0)
+
         logger.info(
-            "Face recognition scanning %d saved identities",
+            "Face recognition scanning %d saved identities (buffered=%d)",
             len(store),
+            len(buf),
         )
         result, similarity = store.search(
-            embedding,
+            mean_emb,
             threshold=config.IDENTITY_SIMILARITY_THRESHOLD,
         )
         logger.info(
@@ -646,6 +685,10 @@ class FaceEngine:
             frame,
             self._get_five_point_landmarks(detection["landmarks"]),
         )
+        buf = self._track_embedding_buffers.get(track_id)
+        if buf:
+            all_embs = list(buf) + [embedding]
+            embedding = np.mean(all_embs, axis=0)
         store.remove("name", name)
         store.add(embedding, {"name": name})
         store.save()
@@ -687,17 +730,21 @@ class FaceEngine:
             for track_id, identity in self._track_identity_cache.items()
             if track_id in active_track_ids
         }
+        stale_buffers = set(self._track_embedding_buffers) - active_track_ids
+        for tid in stale_buffers:
+            self._track_embedding_buffers.pop(tid, None)
 
         for detection in detections:
             track_id = detection.get("track_id")
             if track_id is None:
                 continue
-            cached_identity = self._track_identity_cache.get(int(track_id))
+            tid = int(track_id)
+            cached_identity = self._track_identity_cache.get(tid)
             if cached_identity is not None:
                 detection["identity_name"] = cached_identity["identity_name"]
                 continue
             try:
-                matched_identity = self._recognize_detection(frame, detection)
+                matched_identity = self._recognize_detection(frame, detection, tid)
             except Exception as exc:
                 logger.warning(
                     "Face recognition lookup failed for track=%s: %s", track_id, exc
@@ -859,7 +906,7 @@ class FaceEngine:
                     frame, (x1, y1, x2, y2), self._mediapipe_5pt
                 )
                 if age is not None:
-                    face_dict["age"] = age
+                    face_dict["age"] = self._smooth_age((x1, y1, x2, y2), age)
                 if gender is not None:
                     face_dict["gender"] = gender
                 if emotion is not None:

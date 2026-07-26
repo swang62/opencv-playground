@@ -68,6 +68,8 @@ class CapturePipeline:
         self._cached_label_detections: dict[str, list[dict]] = {}
         self._cached_label_last_seen: dict[str, int] = {}
         self._last_top_k: int = 5
+        self._face_empty_count: int = 0
+        self._body_empty_count: int = 0
         self.error: str | None = None
 
     def _get_first_frame(self, timeout_seconds: float = 5.0):
@@ -213,9 +215,19 @@ class CapturePipeline:
                     detection.copy() for detection in self._face_id_input_detections
                 ]
 
-            if request_time <= last_processed_time or frame is None or not detections:
+            if request_time <= last_processed_time or frame is None:
                 time.sleep(0.01)
                 continue
+
+            if not detections:
+                self._face_empty_count += 1
+                if self._face_empty_count >= config.IDENTITY_REMOVAL_FRAMES:
+                    self.state.set_active_face_ids(set())
+                    with self._result_lock:
+                        self._latest_face_identity_results = []
+                last_processed_time = request_time
+                continue
+            self._face_empty_count = 0
 
             try:
                 identity_results = self.model.face_engine.apply_face_identities(
@@ -263,6 +275,15 @@ class CapturePipeline:
                 current_ids = {
                     det["track_id"] for det in body_results if "track_id" in det
                 }
+                if not current_ids:
+                    self._body_empty_count += 1
+                    if self._body_empty_count >= config.IDENTITY_REMOVAL_FRAMES:
+                        self.state.set_active_body_ids(set())
+                        with self._result_lock:
+                            self._latest_body_identity_results = []
+                    last_processed_time = request_time
+                    continue
+                self._body_empty_count = 0
                 for det in body_results:
                     track_id = det.get("track_id")
                     identity_name = det.get("identity_name")

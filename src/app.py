@@ -383,7 +383,7 @@ def index():
                                 ):
                                     ui.slider(
                                         min=1,
-                                        max=8,
+                                        max=10,
                                         step=1,
                                         value=state.line_thickness,
                                     ).bind_value_to(state, "line_thickness").props(
@@ -761,19 +761,15 @@ def index():
                             CATEGORIES = [
                                 "person",
                                 "animal",
-                                "car",
-                                "food",
-                                "chair",
-                                "clothing",
-                                "phone",
                                 "plant",
-                                "bottle",
-                                "book",
-                                "cup",
-                                "bag",
-                                "ball",
-                                "clock",
-                                "tv",
+                                "food",
+                                "toy",
+                                "furniture",
+                                "clothing",
+                                "electronics",
+                                "vehicle",
+                                "lamp",
+                                "painting",
                             ]
                             selected_cat: str | None = None
                             cat_btns: dict = {}

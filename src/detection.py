@@ -170,7 +170,13 @@ def draw_body_boxes(
         x1, y1, x2, y2 = map(int, bbox[:4])
         draw_corner_bbox(frame, x1, y1, x2, y2, overlay_color, thickness)
         track_id = det.get("track_id")
-        label = f"ID: {track_id}" if track_id is not None else ""
+        identity_name = det.get("identity_name")
+        if identity_name:
+            label = identity_name
+        elif track_id is not None:
+            label = f"ID: {track_id}"
+        else:
+            label = ""
         if label:
             cv2.putText(
                 frame,
@@ -178,7 +184,7 @@ def draw_body_boxes(
                 (x1, max(y1 - 4, 12)),
                 config.OVERLAY_FONT,
                 config.FONT_SCALE,
-                overlay_color,
+                (0, 255, 255),
                 config.FONT_THICKNESS,
             )
 

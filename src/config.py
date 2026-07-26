@@ -29,7 +29,13 @@ PORT = 8765
 TITLE = "Real-Time Object Detection"
 
 # ── Identity thresholds (shared by face and body Re-ID) ───────────────────────
-IDENTITY_SIMILARITY_THRESHOLD = 0.5
+IDENTITY_SIMILARITY_THRESHOLD = 0.6
+IDENTITY_REMOVAL_FRAMES = (
+    10  # consecutive empty frames before clearing a departed identity
+)
+BODY_REID_MIN_AREA_RATIO = (
+    0.05  # min bbox area ratio of frame to attempt Re-ID (avoid limb-only matches)
+)
 
 # ── Identity chips (shared by face and body) ──────────────────────────────────
 IDENTITY_CHIP_WIDTH = 88
@@ -39,7 +45,7 @@ IDENTITY_THUMBNAIL_SIZE = 64
 # ── Overlay appearance ────────────────────────────────────────────────────────
 OVERLAY_COLOR = (0, 255, 0)
 OVERLAY_FONT = cv2.FONT_HERSHEY_SIMPLEX
-OVERLAY_THICKNESS = 3
+OVERLAY_THICKNESS = 5
 FONT_SCALE = 1.5
 FONT_THICKNESS = 2
 ALPHA = 0.3
@@ -54,6 +60,14 @@ CONFIDENCE_STEP = 0.05
 # ── Page layout ───────────────────────────────────────────────────────────────
 PAGE_PADDING_VERTICAL = 16
 PAGE_PADDING_HORIZONTAL = 12
+
+# ── Re-ID embedding buffer ────────────────────────────────────────────────────
+REID_EMBEDDING_BUFFER_SIZE = 5  # frames averaged per track before matching/enrolling
+
+# ── Age smoothing ─────────────────────────────────────────────────────────────
+AGE_SMOOTHING_ALPHA = (
+    0.1  # EMA coefficient for temporal age smoothing (lower = smoother)
+)
 
 # ── Body / hand skeleton ──────────────────────────────────────────────────────
 SKELETON_COLOR = OVERLAY_COLOR
