@@ -43,6 +43,7 @@ class CapturePipeline:
         self.state = state
         self._camera_input = camera
         self._mirror = mirror
+        self._is_external_source = not isinstance(camera, int)
         self._camera = None
         self._latest_frame = None
         self._latest_frame_time = 0.0
@@ -384,7 +385,7 @@ class CapturePipeline:
                 continue
             ret, frame = cap.read()
             if not ret:
-                if hasattr(cap, "seek"):
+                if self._is_external_source:
                     # Transient read failure after seeking (codec/keyframe issue) — retry
                     time.sleep(0.05)
                     continue

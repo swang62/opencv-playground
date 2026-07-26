@@ -135,11 +135,10 @@ def annotate_frame(
 
         for det in detections:
             x1, y1, x2, y2 = map(int, det["bbox"])
-            cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
             cv2.putText(
                 annotated,
                 det["label"],
-                (cx, cy),
+                (x1, y1 - 6),
                 config.OVERLAY_FONT,
                 font_scale,
                 overlay_color,

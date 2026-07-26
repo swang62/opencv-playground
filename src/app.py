@@ -28,6 +28,7 @@ from src.pipeline import CapturePipeline
 from src.state import COLOR_MAP, AppState, color_name_to_hex
 from src.utils import normalize_query
 from src.video_source import VideoFilePlayer
+from src.youtube_source import YouTubeSource
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +37,7 @@ state: AppState = AppState()
 pipeline: CapturePipeline | None = None
 bundle: ModelBundle | None = None
 device_str: str = "unknown"
-_current_video_source: VideoFilePlayer | None = None
+_current_video_source: VideoFilePlayer | YouTubeSource | None = None
 THUMBNAILS_DIR = Path(config.MODELS_DIR) / "screenshots"
 BODY_THUMBNAILS_DIR = Path(config.BODY_THUMBNAILS_DIR)
 
@@ -166,14 +167,71 @@ def index():
         video_label.text = filename
         video_label.visible = True
         webcam_btn.visible = True
+        youtube_btn.visible = False
         open_video_btn.visible = False
         seek_row.visible = True
+
+    async def _pick_youtube():
+        with youtube_dialog:
+            youtube_url_input.value = ""
+            youtube_url_input.run_method("focus")
+        youtube_dialog.open()
+
+    async def _on_youtube_play():
+        url = (youtube_url_input.value or "").strip()
+        if not url:
+            ui.notify("Enter a YouTube URL", type="warning")
+            return
+        youtube_dialog.close()
+        youtube_loading.visible = True
+        try:
+            source = await asyncio.to_thread(
+                lambda: YouTubeSource(
+                    url, target_size=(config.CAMERA_WIDTH, config.CAMERA_HEIGHT)
+                )
+            )
+        except RuntimeError as exc:
+            youtube_loading.visible = False
+            ui.notify(str(exc), type="negative")
+            return
+        youtube_loading.visible = False
+        global pipeline, _current_video_source
+        _stop()
+        _current_video_source = source
+        pipeline = CapturePipeline(
+            bundle, state, camera=_current_video_source, mirror=False
+        )
+        pipeline.start()
+        for _ in range(200):
+            if pipeline.get_latest_encoded_frame() is not None:
+                break
+            await asyncio.sleep(0.01)
+        _clear_display()
+        update_camera_toggle_button()
+        youtube_btn.visible = False
+        open_video_btn.visible = False
+        webcam_btn.visible = True
+        video_label.text = url
+        video_label.visible = True
+
+    # -- YouTube URL dialog --
+    youtube_dialog = ui.dialog()
+    with youtube_dialog, ui.card().classes("w-96"):
+        ui.label("Play YouTube Video").classes("text-bold text-h6 q-mb-sm")
+        youtube_url_input = ui.input(
+            label="YouTube URL",
+            placeholder="https://youtube.com/watch?v=...",
+        ).classes("w-full")
+        with ui.row().classes("w-full justify-end q-mt-sm"):
+            ui.button("Cancel", on_click=youtube_dialog.close).props("flat")
+            ui.button("Play", on_click=_on_youtube_play).props("color=primary")
 
     def _switch_to_webcam():
         global _current_video_source
         _current_video_source = None
         _stop()
         open_video_btn.visible = True
+        youtube_btn.visible = True
         webcam_btn.visible = False
         video_label.visible = False
         seek_row.visible = False
@@ -477,6 +535,16 @@ def index():
                             "", icon="movie", on_click=_pick_and_play
                         ).props("flat round dense size=sm color=white")
                         open_video_btn.tooltip("Open Video File")
+                        youtube_btn = ui.button(
+                            "", icon="smart_display", on_click=_pick_youtube
+                        ).props("flat round dense size=sm color=white")
+                        youtube_btn.tooltip("YouTube Stream")
+                        youtube_loading = (
+                            ui.spinner(size="sm")
+                            .props("color=white")
+                            .classes("q-ml-xs")
+                        )
+                        youtube_loading.visible = False
                         webcam_btn = ui.button(
                             "", icon="videocam", on_click=lambda: _switch_to_webcam()
                         ).props("flat round dense size=sm color=white")
@@ -1097,7 +1165,7 @@ def index():
         if show_panels != identity_panels_row.visible:
             identity_panels_row.visible = show_panels
         # Video seek bar progress
-        if _current_video_source is not None:
+        if isinstance(_current_video_source, VideoFilePlayer):
             if seeking:
                 now = time.time()
                 if now - _last_seek_time > 0.25:
