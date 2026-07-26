@@ -252,9 +252,9 @@ class BodyIdEngine:
             raise FileNotFoundError(msg)
         self._session = ort.InferenceSession(
             str(model_path),
-            providers=["CPUExecutionProvider"],
+            providers=["CoreMLExecutionProvider", "CPUExecutionProvider"],
         )
-        logger.info("OSNet ONNX session created (CPU)")
+        logger.info("OSNet ONNX session created (CoreML)")
 
     def _ensure_store(self):
         if self._store is not None:

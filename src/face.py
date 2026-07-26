@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import concurrent.futures
 import logging
 import ssl
 import threading
@@ -12,9 +13,10 @@ from pathlib import Path
 import cv2
 import mediapipe as mp
 import numpy as np
+import torch
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
-from uniface.attribute import AgeGender
+from uniface.attribute import AgeGender, FairFace
 from uniface.attribute.emotion import Emotion
 from uniface.constants import ArcFaceWeights, SCRFDWeights
 from uniface.detection import SCRFD
@@ -301,11 +303,11 @@ def draw_face_mesh(
                 parts.append(f"Age: {face['age']}")
             if "gender" in face:
                 parts.append(f"{face['gender']}")
+            if "race" in face:
+                parts.append(f"{face['race']}")
             if "emotion" in face:
                 em = face["emotion"]
-                if em in ("Neutral", "neutral"):
-                    em = "-"
-                parts.append(f"Emotion: {em}")
+                parts.append(f"{em}")
             if parts:
                 label = " | ".join(parts)
                 cx_text = (x1 + x2) // 2
@@ -409,6 +411,7 @@ class FaceEngine:
         self._age_gender = None
         self._emotion = None
         self._spoofing = None
+        self._race = None
         self._uniface_lock = threading.Lock()
         self._mediapipe_5pt = None
         self._face_id_detector = None
@@ -423,6 +426,11 @@ class FaceEngine:
         self._label_cache: list[
             dict
         ] = []  # recent label results keyed by bbox for IoU-stable replay
+        self._race_executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="fairface"
+        )
+        self._race_future: concurrent.futures.Future | None = None
+        self._race_results: list[tuple[tuple, str]] = []  # [(bbox, race_str), ...]
 
     def ensure_loaded(self):
         if self._landmarker is not None:
@@ -483,12 +491,28 @@ class FaceEngine:
             with self._uniface_lock:
                 if self._age_gender is None:
                     logger.info("Loading UniFace label models...")
-                    self._age_gender = AgeGender()  # type: ignore[no-untyped-call]
+                    onnx_providers = [
+                        "CoreMLExecutionProvider",
+                        "CPUExecutionProvider",
+                    ]
+                    self._age_gender = AgeGender(  # type: ignore[no-untyped-call]
+                        providers=onnx_providers,
+                    )
                     self._emotion = Emotion()  # type: ignore[no-untyped-call]
-                    self._spoofing = MiniFASNet()  # type: ignore[no-untyped-call]
+                    self._emotion.device = torch.device("cpu")
+                    self._emotion.model = self._emotion.model.to("cpu")
+                    self._spoofing = MiniFASNet(  # type: ignore[no-untyped-call]
+                        providers=onnx_providers,
+                    )
+                    self._race = FairFace(  # type: ignore[no-untyped-call]
+                        providers=onnx_providers,
+                    )
+                    logger.info(
+                        "UniFace label models loaded (age/gender, emotion, spoofing, race)"
+                    )
 
     def _predict_attributes(self, frame, bbox, pts5):
-        """Return (age, gender_str, emotion_str) or None-filled tuple."""
+        """Return (age, gender, emotion) or None-filled tuple."""
         age = None
         gender = None
         emotion = None
@@ -544,6 +568,10 @@ class FaceEngine:
 
     def _ensure_face_id_models(self, load_recognizer: bool = False):
         """Lazy-load SCRFD/ByteTrack, and MobileFace only when needed."""
+        onnx_providers = [
+            "CoreMLExecutionProvider",
+            "CPUExecutionProvider",
+        ]
         if self._face_id_detector is None:
             with self._uniface_lock:
                 if self._face_id_detector is None:
@@ -551,6 +579,7 @@ class FaceEngine:
                     self._face_id_detector = SCRFD(
                         model_name=SCRFDWeights.SCRFD_500M_KPS,
                         input_size=config.FACE_DETECTION_INPUT_SIZE,
+                        providers=onnx_providers,
                     )
                     self._bytetracker = BYTETracker()
         if load_recognizer and self._face_recognizer is None:
@@ -559,6 +588,7 @@ class FaceEngine:
                     logger.info("Loading UniFace ArcFace recognizer (RESNET)...")
                     self._face_recognizer = ArcFace(
                         model_name=ArcFaceWeights.RESNET,
+                        providers=onnx_providers,
                     )
         if load_recognizer:
             self._ensure_face_store()
@@ -839,6 +869,28 @@ class FaceEngine:
 
         return detections
 
+    def _background_race_inference(self, frame, face_data):
+        """Run FairFace on all faces in a background thread.
+
+        Returns list of (bbox_tuple, race_str) for faces where race was predicted.
+        """
+        if self._race is None:
+            return []
+        results = []
+        for bbox, pts5 in face_data:
+            try:
+                uf = UniFace(
+                    bbox=np.array(bbox, dtype=np.float64),
+                    confidence=0.95,
+                    landmarks=np.array(pts5, dtype=np.float64).reshape(-1, 2),
+                )
+                rr = self._race.predict(frame, uf)  # pyright: ignore
+                if isinstance(rr, AttributeResult) and rr.race:
+                    results.append((bbox, rr.race))
+            except Exception:
+                pass
+        return results
+
     def process(
         self,
         frame: np.ndarray,
@@ -938,6 +990,7 @@ class FaceEngine:
                     if cached:
                         for key in (
                             "age",
+                            "race",
                             "gender",
                             "emotion",
                             "spoof_real",
@@ -947,6 +1000,34 @@ class FaceEngine:
                                 face_dict[key] = cached[key]
 
             faces.append(face_dict)
+
+        # Consume background race results into persistent buffer
+        if self._race_future is not None and self._race_future.done():
+            try:
+                results = self._race_future.result()
+                if results:
+                    self._race_results.extend(results)
+                    self._race_results = self._race_results[-3:]  # keep freshest 3
+            except Exception:
+                pass
+            self._race_future = None
+
+        # Kick off background race inference (3x slower than main labels)
+        if (
+            show_labels
+            and self._race is not None
+            and self._race_future is None
+            and self._frame_count % (config.INFERENCE_UPDATE_INTERVAL * 3) == 0
+        ):
+            face_data = [
+                (f["bbox"], self._get_five_point_landmarks(f["landmarks"]))
+                for f in faces
+                if f.get("bbox") and f.get("landmarks")
+            ]
+            if face_data:
+                self._race_future = self._race_executor.submit(
+                    self._background_race_inference, frame.copy(), face_data
+                )
 
         # Update cache on label inference frames
         if (
@@ -961,6 +1042,7 @@ class FaceEngine:
                 entry = {"bbox": face["bbox"]}
                 for key in (
                     "age",
+                    "race",
                     "gender",
                     "emotion",
                     "spoof_real",
@@ -970,5 +1052,19 @@ class FaceEngine:
                         entry[key] = face[key]
                 self._label_cache.append(entry)
             self._label_cache = self._label_cache[-4:]
+
+        # Apply persistent race results to every frame — matches by best IoU
+        # so each person gets their own race label consistently.
+        if self._race_results:
+            for face in faces:
+                best_iou = 0.0
+                best_race = None
+                for r_bbox, r_race in self._race_results:
+                    iou = self._bbox_iou(face["bbox"], r_bbox)
+                    if iou > best_iou:
+                        best_iou = iou
+                        best_race = r_race
+                if best_race is not None:
+                    face["race"] = best_race
 
         return faces

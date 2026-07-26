@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 import logging
+import os
 import threading
+
+# PYTORCH_ENABLE_MPS_FALLBACK must be set before torch import
+os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
 
 import torch
 from ultralytics import YOLO
