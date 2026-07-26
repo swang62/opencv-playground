@@ -167,6 +167,7 @@ def index():
         video_label.visible = True
         webcam_btn.visible = True
         open_video_btn.visible = False
+        seek_row.visible = True
 
     def _switch_to_webcam():
         global _current_video_source
@@ -175,6 +176,7 @@ def index():
         open_video_btn.visible = True
         webcam_btn.visible = False
         video_label.visible = False
+        seek_row.visible = False
         update_camera_toggle_button()
         _start()
 
@@ -423,6 +425,47 @@ def index():
                         camera_toggle_button.props(
                             "flat round dense size=sm color=negative icon=stop"
                         )
+
+                # -- Video seek bar (visible only in video mode) --
+                seeking = False
+                _last_seek_time = 0.0
+
+                def _fmt_time(seconds: float) -> str:
+                    m, s = divmod(int(seconds), 60)
+                    h, m = divmod(m, 60)
+                    if h > 0:
+                        return f"{h}:{m:02d}:{s:02d}"
+                    return f"{m}:{s:02d}"
+
+                def _on_seek_drag():
+                    nonlocal seeking
+                    seeking = True
+
+                def _on_seek_release():
+                    nonlocal seeking, _last_seek_time
+                    seeking = False
+                    _last_seek_time = 0.0
+                    if _current_video_source is not None and pipeline is not None:
+                        pipeline.seek_video(seek_slider.value)
+
+                with ui.row().classes("w-full justify-center q-mt-xs") as seek_row:
+                    seek_row.visible = False
+                    seek_slider = (
+                        ui.slider(
+                            min=0,
+                            max=1,
+                            step=0.001,
+                        )
+                        .props("dense")
+                        .classes("w-full")
+                    )
+                    seek_label = (
+                        ui.label("0:00 / 0:00")
+                        .classes("text-caption text-white q-ml-sm")
+                        .style("min-width: 100px; text-align: right;")
+                    )
+                    seek_slider.on("update:model-value", _on_seek_drag)
+                    seek_slider.on("update:model-value-end", _on_seek_release)
 
                 with ui.row().classes("w-full justify-center q-mt-xs"):
                     with ui.element("div").classes("camera-toolbar"):
@@ -1038,7 +1081,11 @@ def index():
 
     # ---- Timer-driven refresh ------------------------------------------------
     def refresh_all():
-        nonlocal current_face_chip_key, current_body_chip_key, current_frame_jpeg
+        nonlocal \
+            current_face_chip_key, \
+            current_body_chip_key, \
+            current_frame_jpeg, \
+            _last_seek_time
         update_camera_toggle_button()
         if pipeline is not None:
             jpeg = pipeline.get_latest_encoded_frame()
@@ -1049,6 +1096,23 @@ def index():
         show_panels = state.mode == "face" and state.tracking_enabled
         if show_panels != identity_panels_row.visible:
             identity_panels_row.visible = show_panels
+        # Video seek bar progress
+        if _current_video_source is not None:
+            if seeking:
+                now = time.time()
+                if now - _last_seek_time > 0.25:
+                    _last_seek_time = now
+                    if pipeline is not None:
+                        pipeline.seek_video(seek_slider.value)
+            else:
+                seek_slider.value = _current_video_source.progress
+            seek_label.text = (
+                f"{_fmt_time(_current_video_source.current_time)}"
+                f" / {_fmt_time(_current_video_source.duration)}"
+            )
+        else:
+            if seek_row.visible:
+                seek_row.visible = False
         if show_panels:
             links_dict = state.get_face_body_links_snapshot()
             links_snapshot = tuple(sorted(links_dict.items()))

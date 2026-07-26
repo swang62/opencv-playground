@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 import time
 
 import cv2
@@ -32,6 +33,7 @@ class VideoFilePlayer:
         self._frame_count = int(self._cap.get(cv2.CAP_PROP_FRAME_COUNT))
         self._frame_interval = 1.0 / self._fps
         self._last_read_time = 0.0
+        self._cap_lock = threading.Lock()
 
     @property
     def path(self) -> str:
@@ -41,21 +43,52 @@ class VideoFilePlayer:
     def fps(self) -> float:
         return self._fps
 
-    def read(self):
-        now = time.time()
-        elapsed = now - self._last_read_time
-        if elapsed < self._frame_interval and self._last_read_time > 0:
-            time.sleep(self._frame_interval - elapsed)
+    @property
+    def frame_count(self) -> int:
+        return self._frame_count
 
-        ret, frame = self._cap.read()
-        if not ret:
-            self._cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+    @property
+    def duration(self) -> float:
+        return self._frame_count / self._fps if self._fps > 0 else 0.0
+
+    @property
+    def progress(self) -> float:
+        if self._frame_count == 0:
+            return 0.0
+        cur = self._cap.get(cv2.CAP_PROP_POS_FRAMES)
+        return cur / self._frame_count
+
+    @property
+    def current_time(self) -> float:
+        cur = self._cap.get(cv2.CAP_PROP_POS_FRAMES)
+        return cur / self._fps if self._fps > 0 else 0.0
+
+    def seek(self, position: float):
+        """Seek to *position* as a fraction (0.0 = start, 1.0 = end)."""
+        with self._cap_lock:
+            frame_idx = int(position * self._frame_count)
+            self._cap.set(
+                cv2.CAP_PROP_POS_FRAMES,
+                max(0, min(frame_idx, self._frame_count - 1)),
+            )
             self._last_read_time = 0.0
+
+    def read(self):
+        with self._cap_lock:
+            now = time.time()
+            elapsed = now - self._last_read_time
+            if elapsed < self._frame_interval and self._last_read_time > 0:
+                time.sleep(self._frame_interval - elapsed)
+
             ret, frame = self._cap.read()
             if not ret:
-                return False, None
+                self._cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                self._last_read_time = 0.0
+                ret, frame = self._cap.read()
+                if not ret:
+                    return False, None
 
-        self._last_read_time = time.time()
+            self._last_read_time = time.time()
 
         if self._target_size is not None:
             frame = self._letterbox(frame, self._target_size)

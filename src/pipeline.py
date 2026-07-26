@@ -187,6 +187,23 @@ class CapturePipeline:
     def resume(self):
         self._paused = False
 
+    def seek_video(self, position: float):
+        """Seek the video source to *position* (0.0–1.0).
+
+        The capture loop picks up from wherever the decoder lands (nearest keyframe).
+        Fails silently — the slider snaps back to the actual video position on the
+        next timer tick.
+        """
+        cap = self._camera
+        if cap is None or not hasattr(cap, "seek"):
+            return
+        try:
+            cap.seek(position)  # pyright: ignore[reportAttributeAccessIssue]
+        except Exception:
+            return
+        with self._frame_lock:
+            self._latest_frame_time = time.time()
+
     def get_latest_encoded_frame(self) -> bytes | None:
         """Return the most recent annotated image bytes, or None."""
         with self._result_lock:
@@ -367,6 +384,10 @@ class CapturePipeline:
                 continue
             ret, frame = cap.read()
             if not ret:
+                if hasattr(cap, "seek"):
+                    # Transient read failure after seeking (codec/keyframe issue) — retry
+                    time.sleep(0.05)
+                    continue
                 msg = "Camera read failed"
                 logger.error(msg)
                 self.error = msg
