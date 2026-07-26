@@ -38,6 +38,7 @@ pipeline: CapturePipeline | None = None
 bundle: ModelBundle | None = None
 device_str: str = "unknown"
 _current_video_source: VideoFilePlayer | YouTubeSource | None = None
+_session_count: int = 0
 THUMBNAILS_DIR = Path(config.MODELS_DIR) / "screenshots"
 BODY_THUMBNAILS_DIR = Path(config.BODY_THUMBNAILS_DIR)
 
@@ -131,7 +132,17 @@ def index():
     def _clear_display():
         nonlocal current_frame_jpeg
         current_frame_jpeg = None
-        blank = np.zeros((2, 2, 3), dtype=np.uint8)
+        w, h = config.CAMERA_WIDTH, config.CAMERA_HEIGHT
+        blank = np.zeros((h, w, 3), dtype=np.uint8)
+        cv2.putText(
+            blank,
+            "No video stream",
+            (w // 2 - 200, h // 2),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            1.5,
+            (80, 80, 80),
+            2,
+        )
         _, jpeg = cv2.imencode(".jpg", blank)
         encoded = base64.b64encode(jpeg).decode("ascii")
         cam.set_source(f"data:image/jpeg;base64,{encoded}")
@@ -151,7 +162,6 @@ def index():
             if pipeline.get_latest_encoded_frame() is not None:
                 break
             time.sleep(0.01)
-        _clear_display()
         update_camera_toggle_button()
 
     async def _pick_and_play():
@@ -206,7 +216,6 @@ def index():
             if pipeline.get_latest_encoded_frame() is not None:
                 break
             await asyncio.sleep(0.01)
-        _clear_display()
         update_camera_toggle_button()
         youtube_btn.visible = False
         open_video_btn.visible = False
@@ -1148,6 +1157,8 @@ def index():
                                 )
 
     # ---- Timer-driven refresh ------------------------------------------------
+    _clear_display()
+
     def refresh_all():
         nonlocal \
             current_face_chip_key, \
@@ -1249,7 +1260,7 @@ def index():
 
 
 def start_services():
-    """Load models, create pipeline, start capture and inference."""
+    """Load models on startup. Pipeline is started by the user via the Play button."""
     global pipeline, device_str, bundle
 
     device_str = get_device()
@@ -1265,10 +1276,6 @@ def start_services():
         msg = f"Model loading failed: {exc}"
         logger.error(msg)
         state.set_models_error(msg)
-        return
-
-    pipeline = CapturePipeline(bundle, state)
-    pipeline.start()
 
 
 def stop_services():
@@ -1278,8 +1285,24 @@ def stop_services():
         pipeline.stop()
 
 
+def on_connect():
+    global _session_count
+    _session_count += 1
+
+
+def on_disconnect():
+    global _session_count, pipeline
+    _session_count = max(0, _session_count - 1)
+    if _session_count == 0 and pipeline is not None:
+        logger.info("Last client disconnected, stopping pipeline")
+        pipeline.stop()
+        pipeline = None
+
+
 napp.on_startup(lambda: threading.Thread(target=start_services, daemon=True).start())
 napp.on_shutdown(stop_services)
+napp.on_connect(on_connect)
+napp.on_disconnect(on_disconnect)
 
 
 # ---- Entry point ------------------------------------------------------------

@@ -14,7 +14,6 @@ dependencies = [
     "clip",
     "lap>=0.5.12",
     "onnxruntime>=1.27.0",
-    "yt-dlp>=2026.07.04",
 ]
 
 [dependency-groups]

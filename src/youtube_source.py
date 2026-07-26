@@ -1,21 +1,22 @@
 """Stream a YouTube video via yt-dlp with a frame buffer for smooth playback.
 
-Resolves a YouTube URL to a direct stream URL using the ``yt_dlp`` Python
-library, then wraps it in ``cv2.VideoCapture`` with a background reader
-thread and a frame deque to absorb network jitter.  No seek, no progress
-— behaves like a live webcam for the pipeline.
+Resolves a YouTube URL to a direct stream URL using the system ``yt-dlp``
+binary (which picks up your ``~/.yt-dlp.conf`` cookies and VPN config),
+then wraps it in ``cv2.VideoCapture`` with a background reader thread
+and a frame deque to absorb network jitter.  No seek, no progress —
+behaves like a live webcam for the pipeline.
 """
 
 from __future__ import annotations
 
 import collections
 import logging
+import subprocess
 import threading
 import time
 
 import cv2
 import numpy as np
-from yt_dlp import YoutubeDL  # pyright: ignore[reportMissingModuleSource]
 
 logger = logging.getLogger(__name__)
 
@@ -65,27 +66,31 @@ class YouTubeSource:
 
     @staticmethod
     def _resolve(url: str) -> str:
-        """Resolve a YouTube URL to a direct video stream URL."""
+        """Resolve a YouTube URL to a direct stream URL via the system yt-dlp."""
         try:
-            with YoutubeDL(
-                {
-                    "format": "best",
-                    "quiet": True,
-                    "no_warnings": True,
-                }
-            ) as ydl:
-                info = ydl.extract_info(url, download=False)
-        except Exception as exc:
-            raise RuntimeError(f"Failed to resolve YouTube URL: {exc}")
+            result = subprocess.run(
+                ["yt-dlp", "-g", "--no-warnings", url],
+                capture_output=True,
+                text=True,
+                timeout=60,
+                check=False,
+            )
+        except FileNotFoundError:
+            raise RuntimeError(
+                "yt-dlp not found. Install it with `brew install yt-dlp`"
+            )
+        except subprocess.TimeoutExpired:
+            raise RuntimeError("yt-dlp timed out resolving the URL")
 
-        if "url" in info:
-            stream_url = info["url"]  # pyright: ignore[reportIndexIssue]
-        elif info.get("requested_formats"):
-            stream_url = info["requested_formats"][0]["url"]  # pyright: ignore[reportIndexIssue, reportOptionalSubscript, reportTypedDictNotRequiredAccess]
-        else:
-            raise RuntimeError("No stream URL found in YouTube video info")
+        if result.returncode != 0:
+            msg = result.stderr.strip() or "unknown error"
+            raise RuntimeError(f"yt-dlp failed: {msg}")
 
-        assert isinstance(stream_url, str)
+        lines = result.stdout.strip().splitlines()
+        if not lines:
+            raise RuntimeError("No stream URL returned by yt-dlp")
+
+        stream_url = lines[0]
         logger.info("YouTube stream resolved: %s …", stream_url[:80])
         return stream_url
 
