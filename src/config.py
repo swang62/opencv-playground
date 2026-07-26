@@ -52,9 +52,8 @@ CONFIDENCE_MAX = 0.95
 CONFIDENCE_STEP = 0.05
 
 # ── Page layout ───────────────────────────────────────────────────────────────
-PAGE_MAX_WIDTH = 1200
-PAGE_PADDING_VERTICAL = 24
-PAGE_PADDING_HORIZONTAL = 20
+PAGE_PADDING_VERTICAL = 16
+PAGE_PADDING_HORIZONTAL = 12
 
 # ── Body / hand skeleton ──────────────────────────────────────────────────────
 SKELETON_COLOR = OVERLAY_COLOR

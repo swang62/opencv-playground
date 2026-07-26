@@ -73,6 +73,7 @@ def index():
             return
         current_search_status = text
         search_status.set_text(text)
+        search_status_row.visible = bool(text)
 
     # Core webcam lifecycle (defined early so all controls can reference them)
     def _start():
@@ -204,6 +205,14 @@ def index():
         color: rgba(236, 244, 247, 0.35);
         padding: 6px 4px;
       }}
+
+      @media (max-width: 800px) {{
+        .app-layout-row > div {{
+          width: 100% !important;
+          min-width: 100% !important;
+          flex-basis: 100% !important;
+        }}
+      }}
     </style>
     """)
 
@@ -211,11 +220,11 @@ def index():
         ui.element("div")
         .classes(FW)
         .style(
-            f"max-width: {config.PAGE_MAX_WIDTH}px; margin: 0 auto; padding: {config.PAGE_PADDING_VERTICAL}px {config.PAGE_PADDING_HORIZONTAL}px;"
+            f"margin: 0 auto; padding: {config.PAGE_PADDING_VERTICAL}px {config.PAGE_PADDING_HORIZONTAL}px;"
         )
     ):
-        with ui.row().classes("w-full flex-wrap items-start"):
-            with ui.column().classes("flex-1 min-w-0"):
+        with ui.row().classes("w-full flex-wrap items-start app-layout-row"):
+            with ui.column().style("flex: 3 1 0; min-width: 0; overflow: hidden;"):
                 ui.label(config.TITLE).classes(
                     "text-h4 text-weight-bold text-center w-full q-mb-md"
                 )
@@ -712,7 +721,7 @@ def index():
                             )
 
             # -- controls (right on desktop, bottom on mobile) --
-            with ui.column().classes("flex-none"):
+            with ui.column().style("flex: 1 1 0; min-width: 0; overflow: hidden;"):
                 ui.element("div").style("height: 56px")  # spacer to align with title
 
                 # Search -------------------------------------------------------
@@ -748,9 +757,61 @@ def index():
                                 ui.button("Find", on_click=lambda: do_search()).props(
                                     "unelevated no-caps"
                                 ).classes("premium-button")
-                            search_status = ui.label("").classes(
-                                "text-caption text-grey q-mt-n2"
-                            )
+                            # Quick category pills (flex-wrap, mutex)
+                            CATEGORIES = [
+                                "person",
+                                "animal",
+                                "car",
+                                "food",
+                                "chair",
+                                "clothing",
+                                "phone",
+                                "plant",
+                                "bottle",
+                                "book",
+                                "cup",
+                                "bag",
+                                "ball",
+                                "clock",
+                                "tv",
+                            ]
+                            selected_cat: str | None = None
+                            cat_btns: dict = {}
+                            with ui.row().classes("w-full q-mt-xs gap-1 flex-wrap"):
+                                for cat in CATEGORIES:
+                                    btn = ui.button(
+                                        cat,
+                                        on_click=lambda c=cat: toggle_cat(c),
+                                    ).props("outline rounded no-caps size=sm")
+                                    cat_btns[cat] = btn
+
+                            def toggle_cat(cat: str):
+                                nonlocal selected_cat
+                                if cat == selected_cat:
+                                    return  # already active
+                                # Deselect previous
+                                if selected_cat is not None:
+                                    cat_btns[selected_cat].props("outline")
+                                # Select new
+                                selected_cat = cat
+                                cat_btns[cat].props(remove="outline")
+                                target = normalize_query(cat)
+                                state.submit_target(target)
+                                set_search_status(f'Searching: "{cat}"')
+                                search_inp.value = ""
+                                if pipeline is not None:
+                                    pipeline.model.set_prompt(target)
+
+                            ui.element("div").classes("flex-grow")  # spacer
+                            # Search status chip (always at bottom)
+                            with ui.row().classes(
+                                "items-center q-mt-xs gap-1"
+                            ) as search_status_row:
+                                ui.icon("search").classes("text-primary text-caption")
+                                search_status = ui.label("").classes(
+                                    "text-caption text-white"
+                                )
+                            search_status_row.visible = False
                         with ui.tab_panel("Detect"):
                             with ui.row().classes(IWN):
                                 ui.label("Top").classes(CAP)
@@ -852,9 +913,14 @@ def index():
     # ---- Page-local helper closures -----------------------------------------
 
     def do_search():
+        nonlocal selected_cat
         raw = (search_inp.value or "").strip()
         target = normalize_query(raw)
         if target:
+            # Clear category selection when user types
+            if selected_cat is not None:
+                cat_btns[selected_cat].props("outline")
+                selected_cat = None
             state.submit_target(target)
             set_search_status(f'Searching: "{target}"')
             search_inp.value = ""
