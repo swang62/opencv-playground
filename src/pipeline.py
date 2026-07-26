@@ -11,7 +11,7 @@ import cv2
 from src import config
 from src.body import draw_hand_skeleton, draw_pose_skeleton
 from src.camera import create_camera
-from src.detection import annotate_frame, extract_detections
+from src.detection import annotate_frame, draw_body_boxes, extract_detections
 from src.face import apply_privacy, draw_face_mesh
 from src.filters import apply_visual_filter
 from src.state import color_name_to_bgr, get_predict_kwargs
@@ -49,15 +49,20 @@ class CapturePipeline:
         self._latest_encoded_frame = None
         self._latest_face_detections: list[dict] = []
         self._latest_face_identity_results: list[dict] = []
+        self._latest_body_identity_results: list[dict] = []
         self._face_id_input_frame = None
         self._face_id_input_detections: list[dict] = []
         self._face_id_input_time = 0.0
+        self._body_id_input_frame = None
+        self._body_id_input_time = 0.0
         self._frame_lock = threading.Lock()
         self._result_lock = threading.Lock()
         self._face_id_lock = threading.Lock()
+        self._body_id_lock = threading.Lock()
         self._capture_thread: threading.Thread | None = None
         self._inference_thread: threading.Thread | None = None
         self._face_id_thread: threading.Thread | None = None
+        self._body_id_thread: threading.Thread | None = None
         self._detect_frame_num = 0
         self._cached_top_labels: set[str] = set()
         self._cached_label_detections: dict[str, list[dict]] = {}
@@ -143,9 +148,11 @@ class CapturePipeline:
             target=self.inference_loop, daemon=True
         )
         self._face_id_thread = threading.Thread(target=self.face_id_loop, daemon=True)
+        self._body_id_thread = threading.Thread(target=self.body_id_loop, daemon=True)
         self._inference_thread.start()
         self._face_id_thread.start()
-        logger.info("Capture and inference threads started")
+        self._body_id_thread.start()
+        logger.info("Capture, inference, and identity threads started")
 
     def stop(self):
         """Signal shutdown, join threads, and release the camera."""
@@ -158,6 +165,8 @@ class CapturePipeline:
             self._inference_thread.join(timeout=5)
         if self._face_id_thread is not None:
             self._face_id_thread.join(timeout=5)
+        if self._body_id_thread is not None:
+            self._body_id_thread.join(timeout=5)
 
         if self._camera is not None:
             self._camera.release()
@@ -233,6 +242,47 @@ class CapturePipeline:
             last_processed_time = request_time
         logger.info("Face ID loop ended")
 
+    def body_id_loop(self):
+        logger.info("Body ID loop started")
+        last_processed_time = 0.0
+        while not self.state.shutdown:
+            with self._body_id_lock:
+                request_time = self._body_id_input_time
+                frame = (
+                    None
+                    if self._body_id_input_frame is None
+                    else self._body_id_input_frame.copy()
+                )
+
+            if request_time <= last_processed_time or frame is None:
+                time.sleep(0.01)
+                continue
+
+            try:
+                body_results = self.model.body_id_engine.track_and_recognize(frame)
+                current_ids = {
+                    det["track_id"] for det in body_results if "track_id" in det
+                }
+                for det in body_results:
+                    track_id = det.get("track_id")
+                    identity_name = det.get("identity_name")
+                    if track_id is not None and isinstance(identity_name, str):
+                        self.state.set_body_id_name(track_id, identity_name)
+                self.state.set_active_body_ids(current_ids)
+                with self._result_lock:
+                    self._latest_body_identity_results = [
+                        det.copy() for det in body_results
+                    ]
+            except Exception as exc:
+                logger.warning("Body ID worker error: %s", exc)
+
+            last_processed_time = request_time
+        logger.info("Body ID loop ended")
+
+    def get_latest_body_snapshot(self, track_id: int) -> dict | None:
+        """Return the latest (frame, detection) snapshot for a body track, or None."""
+        return self.model.body_id_engine.get_snapshot(track_id)
+
     def capture_loop(self):
         cap = self._camera
         if cap is None:
@@ -299,7 +349,7 @@ class CapturePipeline:
             try:
                 kwargs = get_predict_kwargs(self.state)
                 if mode == "face":
-                    kwargs["show_labels"] = self.state.face_show_labels
+                    kwargs["show_labels"] = self.state.tracking_enabled
                 results = self.model.predict(display_frame, mode, **kwargs)
                 consecutive_errors = 0
             except Exception as exc:
@@ -316,28 +366,36 @@ class CapturePipeline:
                 continue
 
             oc = color_name_to_bgr(self.state.overlay_color_name)
-            ft = max(2, int(self.state.font_scale * 1.5))
+            ft = max(2, int((self.state.font_scale or config.FONT_SCALE) * 1.5))
 
             if mode == "face":
                 detections = results  # already extracted dicts from FaceEngine
-                show_labels = self.state.face_show_labels
-                if self.state.face_show_ids:
+                show_labels = self.state.tracking_enabled
+                if self.state.tracking_enabled:
+                    # Feed face identity worker
                     with self._face_id_lock:
                         self._face_id_input_frame = display_frame.copy()
                         self._face_id_input_detections = [
                             detection.copy() for detection in detections
                         ]
                         self._face_id_input_time = frame_time
-                    with self._result_lock:
-                        identity_results = [
-                            detection.copy()
-                            for detection in self._latest_face_identity_results
-                        ]
-                    self.model.face_engine.merge_face_identity_results(
-                        detections,
-                        identity_results,
-                    )
+                    # Feed body identity worker (frame only; BodyIdEngine does its own detection)
+                    with self._body_id_lock:
+                        self._body_id_input_frame = display_frame.copy()
+                        self._body_id_input_time = frame_time
+                    # Merge face identity results
+                    if self.state.tracking_enabled:
+                        with self._result_lock:
+                            identity_results = [
+                                detection.copy()
+                                for detection in self._latest_face_identity_results
+                            ]
+                        self.model.face_engine.merge_face_identity_results(
+                            detections,
+                            identity_results,
+                        )
                 else:
+                    # Clear face identity worker
                     with self._face_id_lock:
                         self._face_id_input_frame = None
                         self._face_id_input_detections = []
@@ -345,6 +403,13 @@ class CapturePipeline:
                     with self._result_lock:
                         self._latest_face_identity_results = []
                     self.state.set_active_face_ids(set())
+                    # Clear body identity worker
+                    with self._body_id_lock:
+                        self._body_id_input_frame = None
+                        self._body_id_input_time = 0.0
+                    with self._result_lock:
+                        self._latest_body_identity_results = []
+                    self.state.set_active_body_ids(set())
                 with self._result_lock:
                     self._latest_face_detections = [
                         detection.copy() for detection in detections
@@ -355,11 +420,15 @@ class CapturePipeline:
                     self.state.visual_filter,
                 )
                 # Snapshot the name dict for thread safety.
-                name_snapshot = dict(self.state.face_id_names)
+                name_snapshot = (
+                    dict(self.state.face_id_names)
+                    if self.state.tracking_enabled
+                    else {}
+                )
                 annotated = draw_face_mesh(
                     draw_frame,
                     detections,
-                    show_wireframe=self.state.face_show_wireframe,
+                    show_wireframe=self.state.face_mesh_enabled,
                     show_labels=show_labels,
                     overlay_color=oc,
                     font_scale=self.state.font_scale,
@@ -376,7 +445,7 @@ class CapturePipeline:
                         inplace=True,
                     )
 
-                if self.state.face_show_skeleton:
+                if self.state.body_mesh_enabled:
                     try:
                         poses = self.model.body_engine.process_pose(display_frame)
                         for pts in poses:
@@ -403,7 +472,32 @@ class CapturePipeline:
                     except Exception:
                         pass
 
+                # Draw faint body outlines when tracking is enabled
+                if self.state.tracking_enabled:
+                    with self._result_lock:
+                        body_results = [
+                            det.copy() for det in self._latest_body_identity_results
+                        ]
+                    if body_results:
+                        try:
+                            draw_body_boxes(
+                                annotated,
+                                body_results,
+                                overlay_color=oc,
+                                thickness=self.state.line_thickness,
+                            )
+                        except Exception:
+                            pass
+
             else:
+                # Non-face mode: ensure body identity worker is cleared
+                with self._body_id_lock:
+                    self._body_id_input_frame = None
+                    self._body_id_input_time = 0.0
+                with self._result_lock:
+                    self._latest_body_identity_results = []
+                self.state.set_active_body_ids(set())
+
                 extraction_confidence = (
                     config.FIND_CONFIDENCE if mode == "find" else self.state.confidence
                 )
@@ -498,7 +592,7 @@ class CapturePipeline:
                     draw_frame,
                     detections,
                     mode,
-                    mask_opacity=self.state.mask_opacity,
+                    mask_opacity=0.3,
                     overlay_color=oc,
                     font_scale=self.state.font_scale,
                     font_thickness=ft,

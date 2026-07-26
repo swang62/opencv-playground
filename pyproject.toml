@@ -12,6 +12,8 @@ dependencies = [
     "uniface[cpu]>=3.7.1",
     "faiss-cpu>=1.11.0",
     "clip",
+    "lap>=0.5.12",
+    "onnxruntime>=1.27.0",
 ]
 
 [dependency-groups]
@@ -30,6 +32,17 @@ default-groups = "all"
 clip = { git = "https://github.com/ultralytics/CLIP.git" }
 
 [tool.ruff.lint]
-ignore = ["E402"]
+ignore = [
+    "E402",    # import not at top of file (lazy imports / NiceGUI ordering)
+    "BLE001",  # blind Exception catch — intentional for fault isolation
+    "S110",    # try-except-pass — intentional for non-critical paths
+    "SIM117",  # nested with — NiceGUI UI nesting is structural, not flattenable
+    "PLW0602", # using global for name without assignment — read-only globals are fine
+    "PLW0642", # reassigning self — objc bridging pattern in camera.py
+]
+[tool.ruff.lint.per-file-ignores]
+"src/camera.py" = ["PLW0642"]
+
+
 [tool.ruff.format]
 docstring-code-format = true

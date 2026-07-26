@@ -11,6 +11,7 @@ from ultralytics.nn.text_model import MobileCLIPTS
 
 from src import config
 from src.body import BodyEngine
+from src.body_reid import BodyIdEngine
 from src.face import FaceEngine
 
 logger = logging.getLogger(__name__)
@@ -72,6 +73,7 @@ class ModelBundle:
         self._text_prompt_embedding_cache: dict[str, torch.Tensor] = {}
         self._face_engine: FaceEngine | None = None
         self._body_engine: BodyEngine | None = None
+        self._body_id_engine: BodyIdEngine | None = None
 
     _prompt_thread: threading.Thread | None = None
     _prompt_pending: str = ""
@@ -101,6 +103,12 @@ class ModelBundle:
         if self._body_engine is None:
             self._body_engine = BodyEngine()
         return self._body_engine
+
+    @property
+    def body_id_engine(self):
+        if self._body_id_engine is None:
+            self._body_id_engine = BodyIdEngine()
+        return self._body_id_engine
 
     def set_prompt(self, target: str):
         """Set a new text prompt, using cached embeddings if available."""

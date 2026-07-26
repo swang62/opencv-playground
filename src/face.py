@@ -434,7 +434,7 @@ class FaceEngine:
                 running_mode=vision.RunningMode.VIDEO,
                 output_face_blendshapes=False,
                 output_facial_transformation_matrixes=False,
-                num_faces=3,
+                num_faces=2,
             )
             self._landmarker = vision.FaceLandmarker.create_from_options(opts)
             logger.info("Face Landmarker loaded (CPU)")
@@ -617,13 +617,13 @@ class FaceEngine:
         )
         result, similarity = store.search(
             embedding,
-            threshold=config.FACE_ID_SIMILARITY_THRESHOLD,
+            threshold=config.IDENTITY_SIMILARITY_THRESHOLD,
         )
         logger.info(
             "Face similarity search: result=%s score=%.4f threshold=%.4f",
             result,
             similarity,
-            config.FACE_ID_SIMILARITY_THRESHOLD,
+            config.IDENTITY_SIMILARITY_THRESHOLD,
         )
         if result is None:
             logger.info("Face recognition found no match above threshold")

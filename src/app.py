@@ -6,6 +6,7 @@ import base64
 import logging
 import threading
 import warnings
+from collections.abc import Callable
 from pathlib import Path
 
 import cv2
@@ -29,11 +30,22 @@ pipeline: CapturePipeline | None = None
 bundle: ModelBundle | None = None
 device_str: str = "unknown"
 THUMBNAILS_DIR = Path(config.MODELS_DIR) / "screenshots"
+BODY_THUMBNAILS_DIR = Path(config.BODY_THUMBNAILS_DIR)
 
 
 def _face_thumbnail_url(name: str) -> str | None:
     """Return a data URL for the face thumbnail, or None if missing."""
     path = THUMBNAILS_DIR / f"{name}.jpg"
+    if not path.exists():
+        return None
+    data = path.read_bytes()
+    b64 = base64.b64encode(data).decode("ascii")
+    return f"data:image/jpeg;base64,{b64}"
+
+
+def _body_thumbnail_url(name: str) -> str | None:
+    """Return a data URL for the body thumbnail, or None if missing."""
+    path = BODY_THUMBNAILS_DIR / f"{name}.jpg"
     if not path.exists():
         return None
     data = path.read_bytes()
@@ -53,6 +65,7 @@ def index():
     current_search_status = ""
     current_frame_jpeg: bytes | None = None
     current_face_chip_key: tuple[tuple[int, str], ...] = ()
+    current_body_chip_key: tuple[tuple[int, str], ...] = ()
 
     def set_search_status(text: str):
         nonlocal current_search_status
@@ -153,22 +166,44 @@ def index():
       .camera-toolbar .q-btn--flat {{ color: #fff; }}
       .camera-toolbar .q-btn--flat:hover {{ background: rgba(255, 255, 255, 0.08); }}
       .camera-toolbar .q-btn--flat.q-btn--actionable.q-hoverable .q-focus-helper {{ display: none; }}
-      .face-chip-img {{
+      .identity-chip-img {{
         width: 100% !important;
-        height: {config.FACE_CHIP_WIDTH}px !important;
+        height: {config.IDENTITY_CHIP_WIDTH}px !important;
         object-fit: cover;
         display: block;
         flex-shrink: 0;
       }}
-      .face-chip-action-btn {{
+      .identity-chip-action-btn {{
         opacity: 0;
         transition: opacity 0.15s;
         background: rgba(10, 10, 14, 0.95) !important;
         border: 1px solid rgba(255, 255, 255, 0.2);
         color: #fff !important;
       }}
-      .face-chip-container:hover .face-chip-action-btn {{ opacity: 1; }}
-      .face-chip-placeholder {{ width: 100%; height: {config.FACE_CHIP_WIDTH}px; background: #fff; flex-shrink: 0; }}
+      .identity-chip-container:hover .identity-chip-action-btn {{ opacity: 1; }}
+      .identity-chip-placeholder {{ width: 100%; height: {config.IDENTITY_CHIP_WIDTH}px; background: #fff; flex-shrink: 0; }}
+      .identity-panel {{
+        flex: 1 1 0;
+        min-width: 260px;
+        background: rgba(18, 29, 35, 0.72);
+        border: 1px solid rgba(255, 255, 255, 0.09);
+        border-radius: 12px;
+        padding: 8px;
+      }}
+      .identity-panel-title {{
+        font-size: 0.8rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: rgba(236, 244, 247, 0.6);
+        margin-bottom: 6px;
+        padding-left: 4px;
+      }}
+      .identity-empty-state {{
+        font-size: 0.8rem;
+        color: rgba(236, 244, 247, 0.35);
+        padding: 6px 4px;
+      }}
     </style>
     """)
 
@@ -180,14 +215,12 @@ def index():
         )
     ):
         with ui.row().classes("w-full flex-wrap items-start"):
-            # -- webcam (left on desktop, top on mobile) --
             with ui.column().classes("flex-1 min-w-0"):
                 ui.label(config.TITLE).classes(
                     "text-h4 text-weight-bold text-center w-full q-mb-md"
                 )
                 cam = (
                     ui.interactive_image(
-                        cross=f"{color_name_to_hex(state.overlay_color_name)}55",
                         sanitize=False,
                         events=["mousedown", "mousemove", "mouseup"],
                     )
@@ -204,9 +237,6 @@ def index():
 
                 def update_roi_overlay():
                     roi_overlay.content = ""
-
-                def update_crosshair_color():
-                    cam.props(f"cross={color_name_to_hex(state.overlay_color_name)}55")
 
                 def on_cam_mouse(e):
                     nonlocal \
@@ -303,14 +333,108 @@ def index():
                         ).props("flat round dense size=sm color=white").tooltip(
                             "Reset Zoom"
                         )
-                        update_crosshair_color()
+
+                        # -- Font button --
+                        font_btn = (
+                            ui.button(icon="text_fields")
+                            .props("flat round dense size=sm color=white")
+                            .style("min-width: 36px; min-height: 36px;")
+                        )
+                        font_btn.tooltip("Font scale")
+                        with font_btn:
+                            with ui.menu():
+                                with ui.row().classes(
+                                    "items-center q-pa-xs gap-2 flex-nowrap"
+                                ):
+                                    ui.slider(
+                                        min=1.0,
+                                        max=3.0,
+                                        step=0.1,
+                                        value=state.font_scale,
+                                    ).bind_value_to(state, "font_scale").props(
+                                        "dense"
+                                    ).classes("w-24")
+                                    ui.label().bind_text_from(
+                                        state,
+                                        "font_scale",
+                                        backward=lambda v: f"{v:.1f}",
+                                    ).classes("text-bold text-caption")
+
+                        # -- Thickness button --
+                        thick_btn = (
+                            ui.button(icon="line_weight")
+                            .props("flat round dense size=sm color=white")
+                            .style("min-width: 36px; min-height: 36px;")
+                        )
+                        thick_btn.tooltip("Line thickness")
+                        with thick_btn:
+                            with ui.menu():
+                                with ui.row().classes(
+                                    "items-center q-pa-xs gap-2 flex-nowrap"
+                                ):
+                                    ui.slider(
+                                        min=1,
+                                        max=8,
+                                        step=1,
+                                        value=state.line_thickness,
+                                    ).bind_value_to(state, "line_thickness").props(
+                                        "dense"
+                                    ).classes("w-24")
+                                    ui.label().bind_text_from(
+                                        state,
+                                        "line_thickness",
+                                        backward=lambda v: str(v),
+                                    ).classes("text-bold text-caption")
+
+                        # -- Color button (current color circle, click for palette) --
+                        color_btn = (
+                            ui.button("")
+                            .props("round dense size=sm")
+                            .style(
+                                f"background: {color_name_to_hex(state.overlay_color_name)} !important; min-width: 36px; min-height: 36px;"
+                            )
+                        )
+                        color_btn.tooltip("Overlay color")
+                        with color_btn:
+                            with ui.menu():
+                                with ui.row().classes("q-pa-xs gap-1 flex-nowrap"):
+                                    for color_name in COLOR_MAP:
+                                        hex_color = color_name_to_hex(color_name)
+                                        ui.button("").props(
+                                            "round dense size=sm"
+                                        ).style(
+                                            f"background: {hex_color} !important; min-width: 32px; min-height: 32px;"
+                                        ).on_click(
+                                            lambda n=color_name: (
+                                                setattr(state, "overlay_color_name", n),
+                                                color_btn.style(
+                                                    f"background: {color_name_to_hex(n)} !important; min-width: 36px; min-height: 36px;"
+                                                ),
+                                            )
+                                        ).tooltip(color_name)
+
                         update_camera_toggle_button()
 
-                # -- Face ID chips (under webcam) --
+                # -- Identity panels (tracked faces + tracked bodies) --
                 state.load_face_id_names()
-                face_id_chip_row = ui.row().classes("w-full q-mt-sm gap-2 flex-wrap")
-                face_id_chip_row.visible = False
+                identity_panels_row = ui.row().classes("w-full q-mt-sm gap-2")
+                identity_panels_row.visible = False
 
+                with identity_panels_row:
+                    with ui.element("div").classes("identity-panel"):
+                        ui.label("Tracked faces").classes("identity-panel-title")
+                        face_id_chip_row = ui.row().classes("w-full gap-1 flex-wrap")
+                        face_empty = ui.label("No faces tracked").classes(
+                            "identity-empty-state"
+                        )
+                    with ui.element("div").classes("identity-panel"):
+                        ui.label("Tracked bodies").classes("identity-panel-title")
+                        body_id_chip_row = ui.row().classes("w-full gap-1 flex-wrap")
+                        body_empty = ui.label("No bodies tracked").classes(
+                            "identity-empty-state"
+                        )
+
+                # -- Face naming dialog --
                 add_name_dialog = ui.dialog()
                 with add_name_dialog, ui.card().classes("w-80"):
                     ui.label("Save Face Name").classes("text-bold text-h6")
@@ -354,8 +478,8 @@ def index():
                     thumb = frame[y1:y2, x1:x2]
                     if thumb.size > 0:
                         scale = min(
-                            config.FACE_THUMBNAIL_SIZE / thumb.shape[1],
-                            config.FACE_THUMBNAIL_SIZE / thumb.shape[0],
+                            config.IDENTITY_THUMBNAIL_SIZE / thumb.shape[1],
+                            config.IDENTITY_THUMBNAIL_SIZE / thumb.shape[0],
                         )
                         new_w = max(1, int(thumb.shape[1] * scale))
                         new_h = max(1, int(thumb.shape[0] * scale))
@@ -401,69 +525,191 @@ def index():
                         thumb_path.unlink()
                     current_face_chip_key = ()
 
+                # -- Body naming dialog --
+                body_add_name_dialog = ui.dialog()
+                with body_add_name_dialog, ui.card().classes("w-80"):
+                    ui.label("Save Body Name").classes("text-bold text-h6")
+                    body_add_name_input = ui.input(
+                        label="Name", placeholder="Enter a name..."
+                    ).classes("w-full")
+                    with ui.row().classes("w-full justify-end"):
+                        ui.button("Cancel", on_click=body_add_name_dialog.close).props(
+                            "flat"
+                        )
+                        body_save_name_button = ui.button("Save").props("color=primary")
+
+                pending_body_track_id: int | None = None
+
+                def save_body_name():
+                    nonlocal current_body_chip_key, pending_body_track_id
+                    name = (body_add_name_input.value or "").strip()
+                    normalized_name = name.upper()
+                    track_id = pending_body_track_id
+                    if track_id is None:
+                        return
+                    if not name:
+                        ui.notify("Enter a name", type="warning")
+                        return
+                    if pipeline is None:
+                        ui.notify("Camera pipeline not ready", type="warning")
+                        return
+                    snapshot = pipeline.get_latest_body_snapshot(track_id)
+                    if snapshot is None:
+                        ui.notify("Selected body is no longer active", type="warning")
+                        return
+                    frame = snapshot["frame"]
+                    detection = snapshot["detection"]
+                    pipeline.model.body_id_engine.enroll_identity(
+                        normalized_name,
+                        frame,
+                        detection,
+                        track_id,
+                    )
+                    # Save body thumbnail
+                    x1, y1, x2, y2 = map(int, detection["bbox"])
+                    thumb = frame[y1:y2, x1:x2]
+                    if thumb.size > 0:
+                        scale = min(
+                            config.IDENTITY_THUMBNAIL_SIZE / thumb.shape[1],
+                            config.IDENTITY_THUMBNAIL_SIZE / thumb.shape[0],
+                        )
+                        new_w = max(1, int(thumb.shape[1] * scale))
+                        new_h = max(1, int(thumb.shape[0] * scale))
+                        thumb_resized = cv2.resize(thumb, (new_w, new_h))
+                        BODY_THUMBNAILS_DIR.mkdir(parents=True, exist_ok=True)
+                        safe_name = "".join(
+                            c if c.isalnum() or c in "-_" else "_"
+                            for c in normalized_name
+                        )
+                        cv2.imwrite(
+                            str(BODY_THUMBNAILS_DIR / f"{safe_name}.jpg"),
+                            thumb_resized,
+                        )
+                    state.set_body_id_name(track_id, normalized_name)
+                    body_add_name_input.value = ""
+                    pending_body_track_id = None
+                    current_body_chip_key = ()
+                    body_add_name_dialog.close()
+
+                body_save_name_button.on_click(save_body_name)
+
+                def open_body_add_name(track_id: int):
+                    nonlocal pending_body_track_id
+                    pending_body_track_id = track_id
+                    body_add_name_input.value = state.body_id_names.get(track_id, "")
+                    body_add_name_dialog.open()
+
+                def delete_body_name(track_id: int):
+                    nonlocal current_body_chip_key
+                    if pipeline is None:
+                        ui.notify("Camera pipeline not ready", type="warning")
+                        return
+                    name = state.body_id_names.get(track_id, "")
+                    if not name:
+                        return
+                    pipeline.model.body_id_engine.remove_identity(name, track_id)
+                    state.clear_body_id_name(track_id)
+                    # Remove thumbnail
+                    safe_name = "".join(
+                        c if c.isalnum() or c in "-_" else "_" for c in name
+                    )
+                    thumb_path = BODY_THUMBNAILS_DIR / f"{safe_name}.jpg"
+                    if thumb_path.exists():
+                        thumb_path.unlink()
+                    current_body_chip_key = ()
+
+                # -- Shared chip rendering helper --
+                def _identity_chip(
+                    *,
+                    track_id: int,
+                    label: str,
+                    tooltip_text: str,
+                    thumb_url: str | None,
+                    on_add: Callable[[int], None] | None,
+                    on_delete: Callable[[int], None] | None,
+                ):
+                    with (
+                        ui.element("div")
+                        .classes(
+                            "identity-chip-container column no-wrap bg-grey-9 text-white"
+                        )
+                        .style(
+                            f"gap: 0; border: 1px solid rgba(255,255,255,0.15); width: {config.IDENTITY_CHIP_WIDTH}px; height: {config.IDENTITY_CHIP_HEIGHT}px; flex-shrink: 0; overflow: hidden; border-radius: 8px;"
+                        )
+                    ):
+                        ui.tooltip(tooltip_text)
+                        if thumb_url:
+                            ui.element("img").classes(
+                                "identity-chip-img flex-none"
+                            ).props(f'src="{thumb_url}"')
+                        else:
+                            ui.element("div").classes("identity-chip-placeholder")
+                        with ui.element("div").classes(
+                            "row items-center no-wrap q-px-xs flex-1 min-w-0 relative"
+                        ):
+                            ui.label(label).classes(
+                                "text-caption ellipsis w-full min-w-0"
+                            )
+                            if on_delete:
+                                ui.button(
+                                    "",
+                                    icon="close",
+                                    on_click=lambda tid=track_id: on_delete(tid),
+                                ).props("dense flat round size=sm color=red").classes(
+                                    "identity-chip-action-btn flex-none"
+                                ).style(
+                                    "position: absolute; right: 0; top: 50%; transform: translateY(-50%);"
+                                )
+                            elif on_add:
+                                ui.button(
+                                    "",
+                                    icon="add",
+                                    on_click=lambda tid=track_id: on_add(tid),
+                                ).props("dense flat round size=sm color=green").classes(
+                                    "identity-chip-action-btn flex-none"
+                                ).style(
+                                    "position: absolute; right: 0; top: 50%; transform: translateY(-50%);"
+                                )
+
                 def rebuild_face_id_chips():
                     face_id_chip_row.clear()
                     active_ids = sorted(state.active_face_ids)
+                    face_empty.visible = len(active_ids) == 0
                     with face_id_chip_row:
                         for track_id in active_ids:
                             face_name = state.face_id_names.get(track_id, "")
                             label = face_name or f"ID: {track_id}"
-                            tooltip_text = f"track_id: {track_id}"
-                            with (
-                                ui.element("div")
-                                .classes(
-                                    "face-chip-container column no-wrap bg-grey-9 text-white"
-                                )
-                                .style(
-                                    f"gap: 0; border: 1px solid rgba(255,255,255,0.15); width: {config.FACE_CHIP_WIDTH}px; height: {config.FACE_CHIP_HEIGHT}px; flex-shrink: 0; overflow: hidden; border-radius: 8px;"
-                                )
-                            ):
-                                ui.tooltip(tooltip_text)
-                                thumb_url = (
-                                    _face_thumbnail_url(face_name)
-                                    if face_name
-                                    else None
-                                )
-                                if thumb_url:
-                                    ui.element("img").classes(
-                                        "face-chip-img flex-none"
-                                    ).props(f'src="{thumb_url}"')
-                                else:
-                                    ui.element("div").classes("face-chip-placeholder")
-                                with ui.element("div").classes(
-                                    "row items-center no-wrap q-px-xs flex-1 min-w-0 relative"
-                                ):
-                                    ui.label(label).classes(
-                                        "text-caption ellipsis w-full min-w-0"
-                                    )
-                                    if face_name:
-                                        ui.button(
-                                            "",
-                                            icon="close",
-                                            on_click=lambda _, tid=track_id: (
-                                                delete_face_name(tid)
-                                            ),
-                                        ).props(
-                                            "dense flat round size=sm color=red"
-                                        ).classes(
-                                            "face-chip-action-btn flex-none"
-                                        ).style(
-                                            "position: absolute; right: 0; top: 50%; transform: translateY(-50%);"
-                                        )
-                                    else:
-                                        ui.button(
-                                            "",
-                                            icon="add",
-                                            on_click=lambda _, tid=track_id: (
-                                                open_add_name(tid)
-                                            ),
-                                        ).props(
-                                            "dense flat round size=sm color=green"
-                                        ).classes(
-                                            "face-chip-action-btn flex-none"
-                                        ).style(
-                                            "position: absolute; right: 0; top: 50%; transform: translateY(-50%);"
-                                        )
+                            thumb_url = (
+                                _face_thumbnail_url(face_name) if face_name else None
+                            )
+                            _identity_chip(
+                                track_id=track_id,
+                                label=label,
+                                tooltip_text=f"track_id: {track_id}",
+                                thumb_url=thumb_url,
+                                on_add=None if face_name else open_add_name,
+                                on_delete=delete_face_name if face_name else None,
+                            )
+
+                def rebuild_body_id_chips():
+                    body_id_chip_row.clear()
+                    active_ids = sorted(state.active_body_ids)
+                    body_empty.visible = len(active_ids) == 0
+                    with body_id_chip_row:
+                        for track_id in active_ids:
+                            body_name = state.body_id_names.get(track_id, "")
+                            label = body_name or f"ID: {track_id}"
+                            thumb_url = (
+                                _body_thumbnail_url(body_name) if body_name else None
+                            )
+                            _identity_chip(
+                                track_id=track_id,
+                                label=label,
+                                tooltip_text=f"body_track_id: {track_id}",
+                                thumb_url=thumb_url,
+                                on_add=None if body_name else open_body_add_name,
+                                on_delete=delete_body_name if body_name else None,
+                            )
 
             # -- controls (right on desktop, bottom on mobile) --
             with ui.column().classes("flex-none"):
@@ -481,10 +727,6 @@ def index():
                         set_search_status("Face Mesh Active")
                     else:
                         state.set_mode("find")
-
-                def set_facial_recognition(enabled: bool):
-                    state.face_show_labels = enabled
-                    state.face_show_ids = enabled
 
                 with ui.card().classes("w-full q-pa-none control-card"):
                     with ui.tabs().classes("w-full mode-tabs") as tabs:
@@ -509,22 +751,6 @@ def index():
                             search_status = ui.label("").classes(
                                 "text-caption text-grey q-mt-n2"
                             )
-                            with ui.row().classes(IWN):
-                                ui.label("Opacity").classes(CAP)
-                                opacity_slider = ui.slider(
-                                    min=0.05,
-                                    max=0.5,
-                                    step=0.05,
-                                    value=state.mask_opacity,
-                                    on_change=lambda e: opacity_label.set_text(
-                                        f"{(e.value or 0.0) * 100:.0f}%"
-                                    ),
-                                ).classes(GROW)
-                                opacity_slider.bind_value_to(state, "mask_opacity")
-                                opacity_label = ui.label(
-                                    f"{state.mask_opacity * 100:.0f}%"
-                                ).classes("text-bold q-ml-sm")
-
                         with ui.tab_panel("Detect"):
                             with ui.row().classes(IWN):
                                 ui.label("Top").classes(CAP)
@@ -579,90 +805,21 @@ def index():
                                     ),
                                 ).props("dense spread").classes("w-full")
                             with ui.row().classes(IWN):
-                                ui.switch(
-                                    "Tracking",
-                                    value=state.face_show_labels
-                                    and state.face_show_ids,
-                                    on_change=lambda e: set_facial_recognition(
-                                        bool(e.value)
-                                    ),
+                                ui.switch("Tracking").bind_value_to(
+                                    state, "tracking_enabled"
                                 )
                             with ui.row().classes(IWN):
                                 ui.switch("Face mesh").bind_value_to(
-                                    state, "face_show_wireframe"
+                                    state, "face_mesh_enabled"
                                 )
                             with ui.row().classes(IWN):
                                 ui.switch("Body mesh").bind_value_to(
-                                    state, "face_show_skeleton"
+                                    state, "body_mesh_enabled"
                                 )
-                # -- Global settings below tabs --
-                with ui.card().classes("w-full q-pa-md control-card"):
-                    ui.label("Global settings").classes("text-bold text-h6")
-
-                    # Webcam control strip
-                    # with ui.row().classes("w-full items-center no-wrap gap-2"):
-                    #     webcam_btn = (
-                    #         ui.button("Refresh").props("outline").classes("flex-1")
-                    #     )
-
-                    #     def on_webcam_start_restart():
-                    #         _start_restart()
-                    #         webcam_btn.text = "Refresh"
-
-                    #     webcam_btn.on_click(on_webcam_start_restart)
-
-                    #     def on_webcam_stop():
-                    #         _stop()
-                    #         webcam_btn.text = "Start"
-
-                    #     ui.button("Stop", on_click=on_webcam_stop).props(
-                    #         "outline"
-                    #     ).classes("flex-1")
-
-                    with ui.row().classes(IWN):
-                        ui.label("Font").classes(CAP)
-                        font_slider = ui.slider(
-                            min=1.0,
-                            max=3.0,
-                            step=0.1,
-                            value=state.font_scale,
-                            on_change=lambda e: font_label.set_text(f"{e.value:.1f}"),
-                        ).classes(GROW)
-                        font_slider.bind_value_to(state, "font_scale")
-                        font_label = ui.label(f"{state.font_scale:.1f}").classes(
-                            "text-bold q-ml-sm"
-                        )
-                    with ui.row().classes(IWN):
-                        ui.label("Thickness").classes(CAP)
-                        thick_slider = ui.slider(
-                            min=1,
-                            max=8,
-                            step=1,
-                            value=state.line_thickness,
-                            on_change=lambda e: thick_label.set_text(
-                                f"{int(e.value or 1)}"
-                            ),
-                        ).classes(GROW)
-                        thick_slider.bind_value_to(state, "line_thickness")
-                        thick_label = ui.label(f"{state.line_thickness}").classes(
-                            "text-bold q-ml-sm"
-                        )
-                    with ui.row().classes("items-center w-full no-wrap justify-evenly"):
-                        for name in COLOR_MAP:
-                            bg = color_name_to_hex(name)
-                            ui.button(
-                                "",
-                                on_click=lambda n=name: setattr(
-                                    state, "overlay_color_name", n
-                                ),
-                            ).props("dense flat padding=none").style(
-                                f"background: {bg}; width: 20px; height: 20px; min-width: 20px; border-radius: 4px;"
-                            )
 
     # ---- Timer-driven refresh ------------------------------------------------
     def refresh_all():
-        nonlocal current_face_chip_key, current_frame_jpeg
-        update_crosshair_color()
+        nonlocal current_face_chip_key, current_body_chip_key, current_frame_jpeg
         update_camera_toggle_button()
         if pipeline is not None:
             jpeg = pipeline.get_latest_encoded_frame()
@@ -670,10 +827,10 @@ def index():
                 current_frame_jpeg = jpeg
                 encoded = base64.b64encode(jpeg).decode("ascii")
                 cam.set_source(f"data:image/jpeg;base64,{encoded}")
-        show_chips = state.mode == "face" and state.face_show_ids
-        if show_chips != face_id_chip_row.visible:
-            face_id_chip_row.visible = show_chips
-        if show_chips:
+        show_panels = state.mode == "face" and state.tracking_enabled
+        if show_panels != identity_panels_row.visible:
+            identity_panels_row.visible = show_panels
+        if show_panels:
             face_chip_key = tuple(
                 (track_id, state.face_id_names.get(track_id, ""))
                 for track_id in sorted(state.active_face_ids)
@@ -681,6 +838,13 @@ def index():
             if face_chip_key != current_face_chip_key:
                 current_face_chip_key = face_chip_key
                 rebuild_face_id_chips()
+            body_chip_key = tuple(
+                (track_id, state.body_id_names.get(track_id, ""))
+                for track_id in sorted(state.active_body_ids)
+            )
+            if body_chip_key != current_body_chip_key:
+                current_body_chip_key = body_chip_key
+                rebuild_body_id_chips()
         update_search_status()
 
     ui.timer(1 / 30, refresh_all)

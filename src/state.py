@@ -21,15 +21,16 @@ class AppState:
     models_error: str | None = None
     camera_error: str | None = None
     shutdown: bool = False
-    face_show_wireframe: bool = True
-    face_show_labels: bool = False
-    face_show_skeleton: bool = False
-    face_show_ids: bool = False
+    face_mesh_enabled: bool = True
+    body_mesh_enabled: bool = False
+    tracking_enabled: bool = False
     face_id_names: dict[int, str] = field(default_factory=dict)
     active_face_ids: set[int] = field(default_factory=set)
+    body_id_names: dict[int, str] = field(default_factory=dict)
+    active_body_ids: set[int] = field(default_factory=set)
     privacy_mode: str = "None"
     visual_filter: str = "None"
-    mask_opacity: float = config.DEFAULT_OPACITY
+
     overlay_color_name: str = "Green"
     font_scale: float = config.FONT_SCALE
     line_thickness: int = config.OVERLAY_THICKNESS
@@ -92,6 +93,18 @@ class AppState:
         with self._lock:
             self.face_id_names.pop(track_id, None)
 
+    def set_active_body_ids(self, ids: set[int]):
+        with self._lock:
+            self.active_body_ids = ids
+
+    def set_body_id_name(self, track_id: int, name: str):
+        with self._lock:
+            self.body_id_names[track_id] = name
+
+    def clear_body_id_name(self, track_id: int):
+        with self._lock:
+            self.body_id_names.pop(track_id, None)
+
     def load_face_id_names(self):
         # Names are persisted in identities.json and reattached after
         # recognition; do not wipe the current session map on page refresh.
@@ -124,13 +137,12 @@ def get_predict_kwargs(state: AppState):
 
 
 COLOR_MAP: dict[str, tuple[int, int, int]] = {
-    "White": (255, 255, 255),
-    "Black": (0, 0, 0),
     "Red": (0, 0, 255),
     "Yellow": (0, 255, 255),
     "Green": (0, 255, 0),
     "Cyan": (255, 255, 0),
     "Magenta": (255, 0, 255),
+    "White": (255, 255, 255),
 }
 
 

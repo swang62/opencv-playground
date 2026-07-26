@@ -2,60 +2,61 @@
 
 import cv2
 
-# Model paths (relative to project root)
+# ── Paths (relative to project root) ──────────────────────────────────────────
 MODELS_DIR = "models"
+BODY_IDENTITIES_DIR = f"{MODELS_DIR}/body-identities"
+BODY_THUMBNAILS_DIR = f"{MODELS_DIR}/body-thumbnails"
 PROMPTED_MODEL = f"{MODELS_DIR}/yoloe-26l-seg.pt"
 PROMPTFREE_MODEL = f"{MODELS_DIR}/yoloe-26l-seg-pf.pt"
+BODY_DETECTION_MODEL = "yolo11s.pt"
+DETECT_CONFIDENCE = 0.45
+BODY_REID_MODEL = f"{MODELS_DIR}/osnet_x1_0_msmt17.onnx"
 
-# Inference size (pixels, squared). Lower = faster, less sensitive to small objects.
+# ── Inference size ────────────────────────────────────────────────────────────
 INFERENCE_SIZE = 640
+FACE_DETECTION_INPUT_SIZE = (INFERENCE_SIZE, INFERENCE_SIZE)
 
-# Camera
+# ── Camera ────────────────────────────────────────────────────────────────────
 CAMERA_INDEX = 0
 CAMERA_WIDTH = 1920
 CAMERA_HEIGHT = 1080
-
 CAMERA_UPDATE_INTERVAL = 20
 MAX_DETECT_BOX_AREA_RATIO = 0.5
 
-# Server
+# ── Server ────────────────────────────────────────────────────────────────────
 HOST = "127.0.0.1"
 PORT = 8765
 TITLE = "Real-Time Object Detection"
 
-# UI defaults
-DEFAULT_THRESHOLD = 0.2
-DEFAULT_OPACITY = 0.2
+# ── Identity thresholds (shared by face and body Re-ID) ───────────────────────
+IDENTITY_SIMILARITY_THRESHOLD = 0.5
 
+# ── Identity chips (shared by face and body) ──────────────────────────────────
+IDENTITY_CHIP_WIDTH = 88
+IDENTITY_CHIP_HEIGHT = 112
+IDENTITY_THUMBNAIL_SIZE = 64
+
+# ── Overlay appearance ────────────────────────────────────────────────────────
+OVERLAY_COLOR = (0, 255, 0)
+OVERLAY_FONT = cv2.FONT_HERSHEY_SIMPLEX
+OVERLAY_THICKNESS = 3
+FONT_SCALE = 1.5
+FONT_THICKNESS = 2
+ALPHA = 0.3
+
+# ── UI defaults ───────────────────────────────────────────────────────────────
+DEFAULT_THRESHOLD = 0.2
 FIND_CONFIDENCE = 0.1
 CONFIDENCE_MIN = 0.05
 CONFIDENCE_MAX = 0.95
 CONFIDENCE_STEP = 0.05
 
-# Overlay appearance — single green used everywhere.
-OVERLAY_COLOR = (0, 255, 0)
-OVERLAY_THICKNESS = 4
-
-# Overlay font
-OVERLAY_FONT = cv2.FONT_HERSHEY_SIMPLEX
-FONT_SCALE = 1.5
-FONT_THICKNESS = 2
-
-# Face mesh rendering
-FACE_ID_SIMILARITY_THRESHOLD = 0.5
-FACE_DETECTION_INPUT_SIZE = (640, 640)
-
-# Page layout
+# ── Page layout ───────────────────────────────────────────────────────────────
 PAGE_MAX_WIDTH = 1200
 PAGE_PADDING_VERTICAL = 24
 PAGE_PADDING_HORIZONTAL = 20
 
-# Face ID chips
-FACE_CHIP_WIDTH = 88
-FACE_CHIP_HEIGHT = 112
-FACE_THUMBNAIL_SIZE = 64
-
-# Body / hand skeleton
+# ── Body / hand skeleton ──────────────────────────────────────────────────────
 SKELETON_COLOR = OVERLAY_COLOR
 SKELETON_THICKNESS = 4
 JOINT_RADIUS = 6

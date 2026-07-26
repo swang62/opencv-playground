@@ -249,7 +249,7 @@ class BodyEngine:
             opts = vision.PoseLandmarkerOptions(
                 base_options=base_opts,
                 running_mode=vision.RunningMode.VIDEO,
-                num_poses=1,
+                num_poses=2,
                 output_segmentation_masks=False,
             )
             self._pose = vision.PoseLandmarker.create_from_options(opts)
@@ -270,7 +270,7 @@ class BodyEngine:
             opts = vision.HandLandmarkerOptions(
                 base_options=base_opts,
                 running_mode=vision.RunningMode.VIDEO,
-                num_hands=2,
+                num_hands=4,
             )
             self._hand = vision.HandLandmarker.create_from_options(opts)
             logger.info("Hand Landmarker loaded (CPU)")
