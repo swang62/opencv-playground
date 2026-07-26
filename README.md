@@ -1,85 +1,49 @@
 # OpenCV Playground
 
-Real-time local vision playground built with [YOLOE-26](https://docs.ultralytics.com/models/yoloe/) and [NiceGUI](https://nicegui.io/).
+Real-time local vision playground built around [YOLOE-26](https://docs.ultralytics.com/models/yoloe/) for open-ended object/keyword search, and various facial/body recognition models for identity detection and tracking.
 
-Search for objects in plain English, detect everything in frame, or switch to face mode for face analysis and identity tracking.
+## Core features
 
-## At a glance
-
-* **3 modes** — Find, Detect, Face
-* **3 sources** — webcam, local video, YouTube
-* **Persistent identity tracking** — face + body re-ID across frames and restarts
-* **Playback controls** — play, pause, seek, zoom, source switching
+- Multiple detection modes: natural language prompts, prompt-free auto-detect, and tracking features
+- Multiple input sources: webcam, local video files, and YouTube links
+- Persistent face + body tracking and linking with stable track IDs and caching for maximum FPS
 
 ## Modes
 
-### Find
+| Mode   | Core functionality                                                             |
+| ------ | ------------------------------------------------------------------------------ |
+| Find   | Search for objects with prompts like `"where is my red mug"`                   |
+| Detect | Detect all visible objects with custom thresholds                              |
+| Face   | Face mesh, body skeleton, facial attributes, image filters, and re-ID tracking |
 
-* Type queries like `"where is my red mug"`
-* Use quick category pills for common targets
-* Shows the active search target
+## Input sources
 
-### Detect
-
-* Detect all visible objects
-* **Top-K control** limits results to the most relevant 1 to 10 detections
-* **Confidence threshold** filters weaker detections
-* Temporal label smoothing reduces flicker
-
-### Face
-
-* **Face mesh** overlay
-* **Face attributes** including age, gender, emotion, race, and liveness
-* **Privacy mode**: none, pixelate, or gaussian blur
-* **Image filters**: heat, CRT, comic, invert
-* **Tracking toggle** enables face + body re-identification
-* **Body mesh** adds pose and hand overlays
-
-## Sources
-
-### Webcam
-
-* Live camera input
-* Starts on demand
-
-### Video file
-
-* Open any local video from the native file picker
-* Infinite looping playback
-* Seek bar with timestamp
-* Pause and resume without losing the current frame
-
-### YouTube
-
-* Paste a YouTube URL and play it in the same interface
-* Buffered playback with reconnect support
+| Source     | Behavior                                                        |
+| ---------- | --------------------------------------------------------------- |
+| Webcam     | Live camera feed                                                |
+| Video file | Native file picker, infinite looping, seek bar                  |
+| YouTube    | Paste a URL and stream with buffered playback (requires yt-dlp) |
 
 All modes work the same across all sources.
 
-## Tracking and identity
+## Libraries used for object detection
 
-* **Face re-ID** recognizes previously saved faces
-* **Body re-ID** recognizes previously saved bodies
-* **Track IDs** stay attached as people move through frame
-* **Buffered matching** waits for enough evidence before naming a track, which cuts down flicker
-* **Face-body auto-linking** connects a face track to a body track when they belong to the same person
-* **Shared naming** lets face and body identities inherit each other's name
-* **Live identity panels** show tracked faces and bodies with thumbnails and add/remove naming actions
-
-## Controls
-
-* **Play / stop** for webcam
-* **Pause / resume** for video and YouTube
-* **Seek bar** for local video
-* **Drag-to-zoom ROI** with reset
-* **Source switching** between webcam, video file, and YouTube
-* **Overlay controls** for color, font scale, and line thickness
+| Component                | Used for                                                |
+| ------------------------ | ------------------------------------------------------- |
+| **YOLOE-26**             | Open-vocabulary object detection                        |
+| **YOLO-11 + OSNet**      | Body tracking and identification                        |
+| **MobileCLIP**           | Text embeddings for natural-language object prompts     |
+| **MediaPipe Landmarker** | 478-point face/skeleton/hand mesh                       |
+| **SCRFD + BYTETracker**  | Face detection and persistent IDs across frames         |
+| **ArcFace**              | Face recognition and identification                     |
+| **UniFace**              | Facial attributes: age, gender, emotion, race, spoofing |
+| **FAISS**                | Persistent embeddings store and retrieval               |
 
 ## Setup
 
 Requires Python 3.13+.
 
-Apple Silicon uses MPS automatically and falls back to CPU when needed. Models download on first launch.
+Optimized for Apple Silicon, CoreMl/MPS automatically used and falls back to CPU when needed. First launch will be slowest to download all models.
 
 ```bash
 uv sync
@@ -95,12 +59,25 @@ brew install yt-dlp     # macOS
 
 ## Troubleshooting
 
-| Symptom | Likely cause |
-|---|---|
-| "Camera not ready" | Camera is in use, permission was denied, or no webcam is connected |
-| "Model loading failed" | First-run model download failed; check network and restart |
-| No detections | Confidence threshold is too high |
-| Low FPS | Running on CPU instead of MPS |
-| "No objects detected" | Nothing matches the Find query; switch to Detect to verify the feed |
-| YouTube fails | `yt-dlp` is missing, or YouTube cookies are unavailable |
-| Ctrl-C doesn't release camera | Force-quit the process if shutdown did not complete cleanly |
+| Symptom                | Likely cause                                                |
+| ---------------------- | ----------------------------------------------------------- |
+| "Camera not ready"     | Camera is in use, permission was denied, or no webcam       |
+| "Model loading failed" | First-run model download failed or corrupted                |
+| No detections          | Confidence threshold is too high or environment is too dark |
+| No faces               | Tracking is disabled or people/faces too small              |
+| Low FPS                | Make sure no other programs are using CPU/GPU               |
+| YouTube fails          | `yt-dlp` is missing, or YouTube cookies are unavailable     |
+
+## Acknowledgements
+
+Built on top of giants:
+
+- [Ultralytics YOLO](https://github.com/ultralytics/ultralytics)
+- [MediaPipe](https://github.com/google-ai-edge/mediapipe)
+- [UniFace](https://github.com/face-hh/uniface)
+- [FAISS](https://github.com/facebookresearch/faiss)
+- [NiceGUI](https://github.com/zauberzeug/nicegui)
+
+## License
+
+MIT. See [LICENSE](LICENSE).

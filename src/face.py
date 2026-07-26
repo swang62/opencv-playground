@@ -701,13 +701,13 @@ class FaceEngine:
         )
         result, similarity = store.search(
             mean_emb,
-            threshold=config.IDENTITY_SIMILARITY_THRESHOLD,
+            threshold=config.SIMILARITY_THRESHOLD,
         )
         logger.debug(
             "Face similarity search: result=%s score=%.4f threshold=%.4f",
             result,
             similarity,
-            config.IDENTITY_SIMILARITY_THRESHOLD,
+            config.SIMILARITY_THRESHOLD,
         )
         if result is None:
             logger.debug("Face recognition found no match above threshold")

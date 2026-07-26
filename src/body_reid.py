@@ -25,7 +25,7 @@ _STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
 
 
 class BodyIdEngine:
-    """Lazy-loaded YOLO11n person tracker + OSNet body re-identification.
+    """Lazy-loaded YOLO11 person tracker + OSNet body re-identification.
 
     Maintains a separate FAISS store for body embeddings, a per-track
     identity cache, and snapshots of the latest frame+detection for each
@@ -241,7 +241,7 @@ class BodyIdEngine:
         from ultralytics import YOLO  # lazy import
 
         self._detector = YOLO(config.BODY_DETECTION_MODEL)
-        logger.info("YOLO11n person detector loaded")
+        logger.info("YOLO11 person detector loaded")
 
     def _load_onnx_session(self):
         import onnxruntime as ort  # lazy import
@@ -328,7 +328,7 @@ class BodyIdEngine:
 
         result, similarity = store.search(
             embedding,
-            threshold=config.IDENTITY_SIMILARITY_THRESHOLD,
+            threshold=config.SIMILARITY_THRESHOLD,
         )
         if result is None:
             return None

@@ -8,9 +8,9 @@ BODY_IDENTITIES_DIR = f"{MODELS_DIR}/body-identities"
 BODY_THUMBNAILS_DIR = f"{MODELS_DIR}/body-thumbnails"
 PROMPTED_MODEL = f"{MODELS_DIR}/yoloe-26l-seg.pt"
 PROMPTFREE_MODEL = f"{MODELS_DIR}/yoloe-26l-seg-pf.pt"
-BODY_DETECTION_MODEL = "yolo11s.pt"
-DETECT_CONFIDENCE = 0.45
+BODY_DETECTION_MODEL = f"{MODELS_DIR}/yolo11s.pt"
 BODY_REID_MODEL = f"{MODELS_DIR}/osnet_x1_0_msmt17.onnx"
+
 
 # ── Inference size ────────────────────────────────────────────────────────────
 INFERENCE_SIZE = 640
@@ -29,7 +29,6 @@ PORT = 8765
 TITLE = "Real-Time Object Detection"
 
 # ── Identity thresholds (shared by face and body Re-ID) ───────────────────────
-IDENTITY_SIMILARITY_THRESHOLD = 0.6
 IDENTITY_REMOVAL_FRAMES = 5  # consecutive empty frames before clearing
 IDENTITY_MIN_AREA_RATIO = 0.1  # min bbox area ratio of frame for re-id
 IDENTITY_CHIP_WIDTH = 88
@@ -47,6 +46,8 @@ ALPHA = 0.3
 # ── UI defaults ───────────────────────────────────────────────────────────────
 DEFAULT_THRESHOLD = 0.2
 FIND_CONFIDENCE = 0.1
+SIMILARITY_THRESHOLD = 0.6
+DETECT_CONFIDENCE = 0.5
 CONFIDENCE_MIN = 0.05
 CONFIDENCE_MAX = 0.95
 CONFIDENCE_STEP = 0.05
