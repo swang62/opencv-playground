@@ -38,10 +38,11 @@ class CapturePipeline:
         with ``.read()`` returning ``(bool, frame)`` and ``.release()``.
     """
 
-    def __init__(self, model, state, camera=config.CAMERA_INDEX):
+    def __init__(self, model, state, camera=config.CAMERA_INDEX, mirror=True):
         self.model = model
         self.state = state
         self._camera_input = camera
+        self._mirror = mirror
         self._camera = None
         self._latest_frame = None
         self._latest_frame_time = 0.0
@@ -68,6 +69,7 @@ class CapturePipeline:
         self._cached_label_detections: dict[str, list[dict]] = {}
         self._cached_label_last_seen: dict[str, int] = {}
         self._last_top_k: int = 5
+        self._paused: bool = False
         self._face_empty_count: int = 0
         self._body_empty_count: int = 0
         self.error: str | None = None
@@ -174,6 +176,16 @@ class CapturePipeline:
             self._camera.release()
             logger.info("Camera released")
         self.state.set_camera_ready(False)
+
+    @property
+    def is_paused(self) -> bool:
+        return self._paused
+
+    def pause(self):
+        self._paused = True
+
+    def resume(self):
+        self._paused = False
 
     def get_latest_encoded_frame(self) -> bytes | None:
         """Return the most recent annotated image bytes, or None."""
@@ -350,6 +362,9 @@ class CapturePipeline:
             return
         logger.info("Capture loop started")
         while not self.state.shutdown:
+            if self._paused:
+                time.sleep(0.05)
+                continue
             ret, frame = cap.read()
             if not ret:
                 msg = "Camera read failed"
@@ -361,7 +376,9 @@ class CapturePipeline:
             now = time.time()
             with self._frame_lock:
                 assert frame is not None
-                self._latest_frame = cv2.flip(frame, 1)
+                if self._mirror:
+                    frame = cv2.flip(frame, 1)
+                self._latest_frame = frame
                 self._latest_frame_time = now
         logger.info("Capture loop ended")
 
@@ -618,8 +635,7 @@ class CapturePipeline:
                     if (
                         not self._cached_top_labels
                         or top_k_changed
-                        or self._detect_frame_num % config.INFERENCE_UPDATE_INTERVAL
-                        == 0
+                        or self._detect_frame_num % config.DETECT_UPDATE_INTERVAL == 0
                     ):
                         label_best: dict[str, float] = {}
                         for d in detections:

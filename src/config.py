@@ -15,12 +15,13 @@ BODY_REID_MODEL = f"{MODELS_DIR}/osnet_x1_0_msmt17.onnx"
 # ── Inference size ────────────────────────────────────────────────────────────
 INFERENCE_SIZE = 640
 INFERENCE_UPDATE_INTERVAL = 20
+DETECT_UPDATE_INTERVAL = 5
 
 # ── Camera ────────────────────────────────────────────────────────────────────
 CAMERA_INDEX = 0
 CAMERA_WIDTH = 1920
 CAMERA_HEIGHT = 1080
-MAX_DETECT_BOX_AREA_RATIO = 0.75  # max bbox area ratio of frame to attempt detection
+MAX_DETECT_BOX_AREA_RATIO = 0.4  # max bbox area ratio of frame to attempt detection
 
 # ── Server ────────────────────────────────────────────────────────────────────
 HOST = "127.0.0.1"

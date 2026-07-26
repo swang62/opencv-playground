@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import colorsys
 import hashlib
 import logging
 import threading
+import time
 import warnings
 from collections.abc import Callable
 from pathlib import Path
 
 import cv2
+import numpy as np
 
 warnings.filterwarnings("ignore", message=".*resource_tracker.*")
 
@@ -19,10 +22,12 @@ from nicegui import app as napp
 from nicegui import ui
 
 from src import config
+from src.file_picker import pick_video
 from src.models import ModelBundle, get_device, load_model_bundle
 from src.pipeline import CapturePipeline
 from src.state import COLOR_MAP, AppState, color_name_to_hex
 from src.utils import normalize_query
+from src.video_source import VideoFilePlayer
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +36,7 @@ state: AppState = AppState()
 pipeline: CapturePipeline | None = None
 bundle: ModelBundle | None = None
 device_str: str = "unknown"
+_current_video_source: VideoFilePlayer | None = None
 THUMBNAILS_DIR = Path(config.MODELS_DIR) / "screenshots"
 BODY_THUMBNAILS_DIR = Path(config.BODY_THUMBNAILS_DIR)
 
@@ -104,20 +110,73 @@ def index():
 
     # Core webcam lifecycle (defined early so all controls can reference them)
     def _start():
-        global pipeline, bundle
+        global pipeline, bundle, _current_video_source
         if bundle is None:
             ui.notify("Models not loaded", type="warning")
             return
         if pipeline is not None:
             return
+        _current_video_source = None
         pipeline = CapturePipeline(bundle, state)
         pipeline.start()
 
     def _stop():
-        global pipeline
+        global pipeline, _current_video_source
+        _current_video_source = None
         if pipeline is not None:
             pipeline.stop()
             pipeline = None
+
+    def _clear_display():
+        nonlocal current_frame_jpeg
+        current_frame_jpeg = None
+        blank = np.zeros((2, 2, 3), dtype=np.uint8)
+        _, jpeg = cv2.imencode(".jpg", blank)
+        encoded = base64.b64encode(jpeg).decode("ascii")
+        cam.set_source(f"data:image/jpeg;base64,{encoded}")
+
+    def _start_with_video(video_path: str):
+        global pipeline, _current_video_source
+        _stop()
+        _current_video_source = VideoFilePlayer(
+            video_path, target_size=(config.CAMERA_WIDTH, config.CAMERA_HEIGHT)
+        )
+        pipeline = CapturePipeline(
+            bundle, state, camera=_current_video_source, mirror=False
+        )
+        pipeline.start()
+        # Wait for first annotated frame so the display switches instantly
+        for _ in range(200):
+            if pipeline.get_latest_encoded_frame() is not None:
+                break
+            time.sleep(0.01)
+        _clear_display()
+        update_camera_toggle_button()
+
+    async def _pick_and_play():
+        path = await asyncio.to_thread(pick_video)
+        if path is None:
+            return
+        try:
+            _start_with_video(path)
+        except RuntimeError as exc:
+            ui.notify(f"Failed to open video: {exc}", type="negative")
+            return
+        filename = Path(path).name
+        video_label.text = filename
+        video_label.visible = True
+        webcam_btn.visible = True
+        open_video_btn.visible = False
+
+    def _switch_to_webcam():
+        global _current_video_source
+        _current_video_source = None
+        _stop()
+        open_video_btn.visible = True
+        webcam_btn.visible = False
+        video_label.visible = False
+        update_camera_toggle_button()
+        _start()
 
     # ---- page chrome --------------------------------------------------------
     ui.add_head_html(f"""
@@ -339,7 +398,13 @@ def index():
                     update_roi_overlay()
 
                 def on_toggle_camera():
-                    if pipeline is None:
+                    if _current_video_source is not None:
+                        if pipeline is not None and pipeline.is_paused:
+                            pipeline.resume()
+                        elif pipeline is not None:
+                            pipeline.pause()
+                        update_camera_toggle_button()
+                    elif pipeline is None:
                         _start()
                     else:
                         _stop()
@@ -349,6 +414,11 @@ def index():
                         camera_toggle_button.props(
                             "flat round dense size=sm color=positive icon=play_arrow"
                         )
+                    elif pipeline.is_paused:
+                        camera_toggle_button.props(
+                            "flat round dense size=sm color=positive icon=play_arrow"
+                        )
+                        camera_toggle_button.tooltip("Resume Video")
                     else:
                         camera_toggle_button.props(
                             "flat round dense size=sm color=negative icon=stop"
@@ -360,6 +430,23 @@ def index():
                             "", on_click=on_toggle_camera
                         ).props("flat round dense size=sm color=negative icon=stop")
                         camera_toggle_button.tooltip("Start/Stop Camera")
+                        open_video_btn = ui.button(
+                            "", icon="movie", on_click=_pick_and_play
+                        ).props("flat round dense size=sm color=white")
+                        open_video_btn.tooltip("Open Video File")
+                        webcam_btn = ui.button(
+                            "", icon="videocam", on_click=lambda: _switch_to_webcam()
+                        ).props("flat round dense size=sm color=white")
+                        webcam_btn.tooltip("Switch to Webcam")
+                        webcam_btn.visible = False
+                        video_label = (
+                            ui.label("")
+                            .classes("text-caption text-white q-ml-xs")
+                            .style(
+                                "max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"
+                            )
+                        )
+                        video_label.visible = False
                         roi_zoom_btn = ui.button(
                             "", icon="crop_free", on_click=on_roi_zoom
                         ).props("flat round dense size=sm color=white")
@@ -829,13 +916,22 @@ def index():
                                 "animal",
                                 "plant",
                                 "food",
-                                "toy",
+                                "fruit",
+                                "beverage",
                                 "furniture",
-                                "clothing",
+                                "chair",
                                 "electronics",
+                                "phone",
+                                "laptop",
+                                "clothing",
+                                "shoe",
+                                "bag",
+                                "book",
+                                "toy",
+                                "bottle",
+                                "cup",
                                 "vehicle",
                                 "lamp",
-                                "painting",
                             ]
                             selected_cat: str | None = None
                             cat_btns: dict = {}
@@ -844,7 +940,7 @@ def index():
                                     btn = ui.button(
                                         cat,
                                         on_click=lambda c=cat: toggle_cat(c),
-                                    ).props("outline rounded no-caps size=sm")
+                                    ).props("outline rounded no-caps")
                                     cat_btns[cat] = btn
 
                             def toggle_cat(cat: str):
