@@ -101,6 +101,18 @@ class BodyIdEngine:
 
         detections = _parse_tracking_results(results)
 
+        # Filter out detections below minimum area ratio (hand/limb-only rejects)
+        frame_area = frame.shape[0] * frame.shape[1]
+        min_area = frame_area * config.IDENTITY_MIN_AREA_RATIO
+        detections = [
+            det
+            for det in detections
+            if det.get("bbox")
+            and len(det["bbox"]) >= 4
+            and (det["bbox"][2] - det["bbox"][0]) * (det["bbox"][3] - det["bbox"][1])
+            >= min_area
+        ]
+
         # Snapshot every active detection for later enrollment/thumbnail use
         active_track_ids = set()
         for det in detections:
@@ -122,21 +134,8 @@ class BodyIdEngine:
         for tid in stale_buffers:
             self._track_embedding_buffers.pop(tid, None)
 
-        # Minimum bbox area for Re-ID (reject partial limb detections)
-        frame_area = frame.shape[0] * frame.shape[1]
-        min_area = frame_area * config.BODY_REID_MIN_AREA_RATIO
-
         for det in detections:
-            bbox = det.get("bbox")
-            if not bbox or len(bbox) < 4:
-                continue
-            area = (bbox[2] - bbox[0]) * (bbox[3] - bbox[1])
-            is_small = area < min_area
-
             tid = det["track_id"]
-
-            if is_small:
-                continue
 
             cached = self._track_identity_cache.get(tid)
             if cached is not None:

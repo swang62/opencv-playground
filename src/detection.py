@@ -154,6 +154,7 @@ def draw_body_boxes(
     body_results: list[dict],
     overlay_color=config.OVERLAY_COLOR,
     thickness: int = config.OVERLAY_THICKNESS,
+    font_scale: float = config.FONT_SCALE,
 ) -> np.ndarray:
     """Draw body bounding boxes with ID labels directly on the frame.
 
@@ -183,7 +184,7 @@ def draw_body_boxes(
                 label,
                 (x1, max(y1 - 4, 12)),
                 config.OVERLAY_FONT,
-                config.FONT_SCALE,
+                font_scale,
                 (0, 255, 255),
                 config.FONT_THICKNESS,
             )

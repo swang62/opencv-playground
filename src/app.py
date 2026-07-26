@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import base64
+import colorsys
+import hashlib
 import logging
 import threading
 import warnings
@@ -53,6 +55,31 @@ def _body_thumbnail_url(name: str) -> str | None:
     return f"data:image/jpeg;base64,{b64}"
 
 
+def _shared_identity_for_link(face_tid: int, body_tid: int) -> str:
+    """Deterministic single identity name for a linked face-body pair.
+
+    Returns the same value regardless of which side calls it, so that both
+    the face and body chip of a linked pair use the same color key.
+    When both names exist and differ, prefers the body name.
+    """
+    face_name = state.face_id_names.get(face_tid, "")
+    body_name = state.body_id_names.get(body_tid, "")
+    return body_name or face_name
+
+
+def _chip_link_color(body_track_id: int, identity_name: str) -> str:
+    """Deterministic hue-spread hex color for a linked pair's chip border.
+
+    Keyed by ``body_track_id`` + ``identity_name`` so that both the face and
+    body chip of a linked pair share the same outline color.
+    """
+    key = f"{body_track_id}:{identity_name}"
+    digest = hashlib.md5(key.encode(), usedforsecurity=False).digest()
+    hue = (int.from_bytes(digest[:4], "big") % 360) / 360.0
+    r, g, b = colorsys.hls_to_rgb(hue, 0.55, 0.65)
+    return f"#{int(r * 255):02x}{int(g * 255):02x}{int(b * 255):02x}"
+
+
 @ui.page("/")
 def index():
     """Assemble the full page."""
@@ -64,8 +91,8 @@ def index():
     GROW = "flex-grow"
     current_search_status = ""
     current_frame_jpeg: bytes | None = None
-    current_face_chip_key: tuple[tuple[int, str], ...] = ()
-    current_body_chip_key: tuple[tuple[int, str], ...] = ()
+    current_face_chip_key: object = ()
+    current_body_chip_key: object = ()
 
     def set_search_status(text: str):
         nonlocal current_search_status
@@ -636,14 +663,20 @@ def index():
                     thumb_url: str | None,
                     on_add: Callable[[int], None] | None,
                     on_delete: Callable[[int], None] | None,
+                    border_color: str | None = None,
                 ):
+                    border_style = (
+                        f"border: 3px solid {border_color};"
+                        if border_color
+                        else "border: 1px solid rgba(255,255,255,0.15);"
+                    )
                     with (
                         ui.element("div")
                         .classes(
                             "identity-chip-container column no-wrap bg-grey-9 text-white"
                         )
                         .style(
-                            f"gap: 0; border: 1px solid rgba(255,255,255,0.15); width: {config.IDENTITY_CHIP_WIDTH}px; height: {config.IDENTITY_CHIP_HEIGHT}px; flex-shrink: 0; overflow: hidden; border-radius: 8px;"
+                            f"gap: 0; {border_style} width: {config.IDENTITY_CHIP_WIDTH}px; height: {config.IDENTITY_CHIP_HEIGHT}px; flex-shrink: 0; overflow: hidden; border-radius: 8px;"
                         )
                     ):
                         ui.tooltip(tooltip_text)
@@ -684,13 +717,28 @@ def index():
                     face_id_chip_row.clear()
                     active_ids = sorted(state.active_face_ids)
                     face_empty.visible = len(active_ids) == 0
+                    face_body_links = state.get_face_body_links_snapshot()
                     with face_id_chip_row:
                         for track_id in active_ids:
                             face_name = state.face_id_names.get(track_id, "")
-                            label = face_name or f"ID: {track_id}"
+                            body_tid = face_body_links.get(track_id)
+                            if face_name:
+                                label = face_name
+                            elif body_tid is not None and state.body_id_names.get(
+                                body_tid
+                            ):
+                                label = state.body_id_names[body_tid]
+                            else:
+                                label = f"ID: {track_id}"
                             thumb_url = (
                                 _face_thumbnail_url(face_name) if face_name else None
                             )
+                            border_color = None
+                            if body_tid is not None:
+                                shared_name = _shared_identity_for_link(
+                                    track_id, body_tid
+                                )
+                                border_color = _chip_link_color(body_tid, shared_name)
                             _identity_chip(
                                 track_id=track_id,
                                 label=label,
@@ -698,19 +746,36 @@ def index():
                                 thumb_url=thumb_url,
                                 on_add=None if face_name else open_add_name,
                                 on_delete=delete_face_name if face_name else None,
+                                border_color=border_color,
                             )
 
                 def rebuild_body_id_chips():
                     body_id_chip_row.clear()
                     active_ids = sorted(state.active_body_ids)
                     body_empty.visible = len(active_ids) == 0
+                    face_body_links = state.get_face_body_links_snapshot()
+                    body_face_links = {b: f for f, b in face_body_links.items()}
                     with body_id_chip_row:
                         for track_id in active_ids:
                             body_name = state.body_id_names.get(track_id, "")
-                            label = body_name or f"ID: {track_id}"
+                            face_tid = body_face_links.get(track_id)
+                            if body_name:
+                                label = body_name
+                            elif face_tid is not None and state.face_id_names.get(
+                                face_tid
+                            ):
+                                label = state.face_id_names[face_tid]
+                            else:
+                                label = f"ID: {track_id}"
                             thumb_url = (
                                 _body_thumbnail_url(body_name) if body_name else None
                             )
+                            border_color = None
+                            if face_tid is not None:
+                                shared_name = _shared_identity_for_link(
+                                    face_tid, track_id
+                                )
+                                border_color = _chip_link_color(track_id, shared_name)
                             _identity_chip(
                                 track_id=track_id,
                                 label=label,
@@ -718,6 +783,7 @@ def index():
                                 thumb_url=thumb_url,
                                 on_add=None if body_name else open_body_add_name,
                                 on_delete=delete_body_name if body_name else None,
+                                border_color=border_color,
                             )
 
             # -- controls (right on desktop, bottom on mobile) --
@@ -888,16 +954,33 @@ def index():
         if show_panels != identity_panels_row.visible:
             identity_panels_row.visible = show_panels
         if show_panels:
-            face_chip_key = tuple(
-                (track_id, state.face_id_names.get(track_id, ""))
-                for track_id in sorted(state.active_face_ids)
+            links_dict = state.get_face_body_links_snapshot()
+            links_snapshot = tuple(sorted(links_dict.items()))
+            face_chip_key = (
+                tuple(
+                    (
+                        track_id,
+                        state.face_id_names.get(track_id, ""),
+                        state.body_id_names.get(links_dict.get(track_id), ""),
+                    )
+                    for track_id in sorted(state.active_face_ids)
+                ),
+                links_snapshot,
             )
             if face_chip_key != current_face_chip_key:
                 current_face_chip_key = face_chip_key
                 rebuild_face_id_chips()
-            body_chip_key = tuple(
-                (track_id, state.body_id_names.get(track_id, ""))
-                for track_id in sorted(state.active_body_ids)
+            body_to_face = {b: f for f, b in links_dict.items()}
+            body_chip_key = (
+                tuple(
+                    (
+                        track_id,
+                        state.body_id_names.get(track_id, ""),
+                        state.face_id_names.get(body_to_face.get(track_id), ""),
+                    )
+                    for track_id in sorted(state.active_body_ids)
+                ),
+                links_snapshot,
             )
             if body_chip_key != current_body_chip_key:
                 current_body_chip_key = body_chip_key

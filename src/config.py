@@ -14,14 +14,13 @@ BODY_REID_MODEL = f"{MODELS_DIR}/osnet_x1_0_msmt17.onnx"
 
 # ── Inference size ────────────────────────────────────────────────────────────
 INFERENCE_SIZE = 640
-FACE_DETECTION_INPUT_SIZE = (INFERENCE_SIZE, INFERENCE_SIZE)
+INFERENCE_UPDATE_INTERVAL = 20
 
 # ── Camera ────────────────────────────────────────────────────────────────────
 CAMERA_INDEX = 0
 CAMERA_WIDTH = 1920
 CAMERA_HEIGHT = 1080
-CAMERA_UPDATE_INTERVAL = 20
-MAX_DETECT_BOX_AREA_RATIO = 0.5
+MAX_DETECT_BOX_AREA_RATIO = 0.75  # max bbox area ratio of frame to attempt detection
 
 # ── Server ────────────────────────────────────────────────────────────────────
 HOST = "127.0.0.1"
@@ -30,14 +29,8 @@ TITLE = "Real-Time Object Detection"
 
 # ── Identity thresholds (shared by face and body Re-ID) ───────────────────────
 IDENTITY_SIMILARITY_THRESHOLD = 0.6
-IDENTITY_REMOVAL_FRAMES = (
-    10  # consecutive empty frames before clearing a departed identity
-)
-BODY_REID_MIN_AREA_RATIO = (
-    0.05  # min bbox area ratio of frame to attempt Re-ID (avoid limb-only matches)
-)
-
-# ── Identity chips (shared by face and body) ──────────────────────────────────
+IDENTITY_REMOVAL_FRAMES = 5  # consecutive empty frames before clearing
+IDENTITY_MIN_AREA_RATIO = 0.1  # min bbox area ratio of frame for re-id
 IDENTITY_CHIP_WIDTH = 88
 IDENTITY_CHIP_HEIGHT = 112
 IDENTITY_THUMBNAIL_SIZE = 64
@@ -65,12 +58,11 @@ PAGE_PADDING_HORIZONTAL = 12
 REID_EMBEDDING_BUFFER_SIZE = 5  # frames averaged per track before matching/enrolling
 
 # ── Age smoothing ─────────────────────────────────────────────────────────────
-AGE_SMOOTHING_ALPHA = (
-    0.1  # EMA coefficient for temporal age smoothing (lower = smoother)
-)
+AGE_SMOOTHING_ALPHA = 0.1  # EMA coefficient for temporal age smoothing
 
 # ── Body / hand skeleton ──────────────────────────────────────────────────────
 SKELETON_COLOR = OVERLAY_COLOR
 SKELETON_THICKNESS = 4
 JOINT_RADIUS = 6
 FACE_POINT_STRIDE = 4
+FACE_DETECTION_INPUT_SIZE = (INFERENCE_SIZE, INFERENCE_SIZE)

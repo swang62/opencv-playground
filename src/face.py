@@ -420,6 +420,9 @@ class FaceEngine:
         self._smoothed_ages: list[
             tuple
         ] = []  # [(bbox, smoothed_age), ...] for EMA across frames
+        self._label_cache: list[
+            dict
+        ] = []  # recent label results keyed by bbox for IoU-stable replay
 
     def ensure_loaded(self):
         if self._landmarker is not None:
@@ -598,6 +601,18 @@ class FaceEngine:
             self._smoothed_ages = self._smoothed_ages[-4:]
         return round(smoothed)
 
+    def _match_label_cache(self, bbox) -> dict | None:
+        best_iou = 0.0
+        best_entry: dict | None = None
+        for entry in self._label_cache:
+            iou = self._bbox_iou(bbox, entry["bbox"])
+            if iou > best_iou:
+                best_iou = iou
+                best_entry = entry
+        # Always return the best match (no hard threshold) — even a slightly stale cached
+        # label with a displaced bbox is less visually jarring than labels flickering off.
+        return best_entry
+
     @staticmethod
     def _get_five_point_landmarks(landmarks: list[tuple[int, int]]) -> np.ndarray:
         return np.array(
@@ -649,7 +664,7 @@ class FaceEngine:
 
         mean_emb = np.mean(list(buf), axis=0)
 
-        logger.info(
+        logger.debug(
             "Face recognition scanning %d saved identities (buffered=%d)",
             len(store),
             len(buf),
@@ -658,14 +673,14 @@ class FaceEngine:
             mean_emb,
             threshold=config.IDENTITY_SIMILARITY_THRESHOLD,
         )
-        logger.info(
+        logger.debug(
             "Face similarity search: result=%s score=%.4f threshold=%.4f",
             result,
             similarity,
             config.IDENTITY_SIMILARITY_THRESHOLD,
         )
         if result is None:
-            logger.info("Face recognition found no match above threshold")
+            logger.debug("Face recognition found no match above threshold")
             return None
         matched_name = str(result.get("name", ""))
         logger.info(
@@ -878,48 +893,82 @@ class FaceEngine:
                 "landmarks": pts,
             }
 
-            if (
-                show_labels
-                and self._age_gender is not None
-                and self._emotion is not None
-                and x2 > x1
-                and y2 > y1
-            ):
-                self._mediapipe_5pt = [
-                    (
-                        sum(pts[i][0] for i in LEFT_EYE_INDICES)
-                        // len(LEFT_EYE_INDICES),  # left eye center
-                        sum(pts[i][1] for i in LEFT_EYE_INDICES)
-                        // len(LEFT_EYE_INDICES),
-                    ),
-                    (
-                        sum(pts[i][0] for i in RIGHT_EYE_INDICES)
-                        // len(RIGHT_EYE_INDICES),  # right eye center
-                        sum(pts[i][1] for i in RIGHT_EYE_INDICES)
-                        // len(RIGHT_EYE_INDICES),
-                    ),
-                    pts[1],  # nose tip
-                    pts[61],  # left mouth corner
-                    pts[291],  # right mouth corner
-                ]
-                age, gender, emotion = self._predict_attributes(
-                    frame, (x1, y1, x2, y2), self._mediapipe_5pt
-                )
-                if age is not None:
-                    face_dict["age"] = self._smooth_age((x1, y1, x2, y2), age)
-                if gender is not None:
-                    face_dict["gender"] = gender
-                if emotion is not None:
-                    face_dict["emotion"] = emotion
+            if show_labels and x2 > x1 and y2 > y1:
+                if (
+                    self._frame_count % config.INFERENCE_UPDATE_INTERVAL == 0
+                    and self._age_gender is not None
+                    and self._emotion is not None
+                    and self._spoofing is not None
+                ):
+                    self._mediapipe_5pt = [
+                        (
+                            sum(pts[i][0] for i in LEFT_EYE_INDICES)
+                            // len(LEFT_EYE_INDICES),  # left eye center
+                            sum(pts[i][1] for i in LEFT_EYE_INDICES)
+                            // len(LEFT_EYE_INDICES),
+                        ),
+                        (
+                            sum(pts[i][0] for i in RIGHT_EYE_INDICES)
+                            // len(RIGHT_EYE_INDICES),  # right eye center
+                            sum(pts[i][1] for i in RIGHT_EYE_INDICES)
+                            // len(RIGHT_EYE_INDICES),
+                        ),
+                        pts[1],  # nose tip
+                        pts[61],  # left mouth corner
+                        pts[291],  # right mouth corner
+                    ]
+                    age, gender, emotion = self._predict_attributes(
+                        frame, (x1, y1, x2, y2), self._mediapipe_5pt
+                    )
+                    if age is not None:
+                        face_dict["age"] = self._smooth_age((x1, y1, x2, y2), age)
+                    if gender is not None:
+                        face_dict["gender"] = gender
+                    if emotion is not None:
+                        face_dict["emotion"] = emotion
 
-            if show_labels and self._spoofing is not None and x2 > x1 and y2 > y1:
-                try:
-                    sr = self._spoofing.predict(frame, [x1, y1, x2, y2])  # pyright: ignore
-                    face_dict["spoof_real"] = sr.is_real
-                    face_dict["spoof_confidence"] = float(sr.confidence)
-                except Exception:
-                    pass
+                    try:
+                        sr = self._spoofing.predict(frame, [x1, y1, x2, y2])  # pyright: ignore
+                        face_dict["spoof_real"] = sr.is_real
+                        face_dict["spoof_confidence"] = float(sr.confidence)
+                    except Exception:
+                        pass
+                else:
+                    cached = self._match_label_cache(face_dict["bbox"])
+                    if cached:
+                        for key in (
+                            "age",
+                            "gender",
+                            "emotion",
+                            "spoof_real",
+                            "spoof_confidence",
+                        ):
+                            if key in cached:
+                                face_dict[key] = cached[key]
 
             faces.append(face_dict)
+
+        # Update cache on label inference frames
+        if (
+            show_labels
+            and self._age_gender is not None
+            and self._emotion is not None
+            and self._spoofing is not None
+            and self._frame_count % config.INFERENCE_UPDATE_INTERVAL == 0
+        ):
+            self._label_cache = []
+            for face in faces:
+                entry = {"bbox": face["bbox"]}
+                for key in (
+                    "age",
+                    "gender",
+                    "emotion",
+                    "spoof_real",
+                    "spoof_confidence",
+                ):
+                    if key in face:
+                        entry[key] = face[key]
+                self._label_cache.append(entry)
+            self._label_cache = self._label_cache[-4:]
 
         return faces

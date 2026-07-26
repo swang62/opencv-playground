@@ -300,6 +300,46 @@ class CapturePipeline:
             last_processed_time = request_time
         logger.info("Body ID loop ended")
 
+    def _update_face_body_links(
+        self, face_detections: list[dict], body_detections: list[dict]
+    ):
+        """Associate face→body tracks by face-center-in-body-bbox rule.
+
+        Stores the link map in state for the UI to style linked chips and for
+        the pipeline to derive display names without mutating saved-name maps.
+        """
+        active_face_ids: set[int] = set()
+        for det in face_detections:
+            tid = det.get("track_id")
+            if tid is not None:
+                active_face_ids.add(int(tid))
+
+        active_body_ids: set[int] = set()
+        for det in body_detections:
+            tid = det.get("track_id")
+            if tid is not None:
+                active_body_ids.add(int(tid))
+
+        links: dict[int, int] = {}
+        for face in face_detections:
+            face_tid = face.get("track_id")
+            if face_tid is None:
+                continue
+            fb = face["bbox"]
+            face_cx = (fb[0] + fb[2]) / 2.0
+            face_cy = (fb[1] + fb[3]) / 2.0
+
+            for body in body_detections:
+                body_tid = body.get("track_id")
+                if body_tid is None:
+                    continue
+                bb = body["bbox"]
+                if bb[0] <= face_cx <= bb[2] and bb[1] <= face_cy <= bb[3]:
+                    links[int(face_tid)] = int(body_tid)
+                    break
+
+        self.state.set_face_body_links(links)
+
     def get_latest_body_snapshot(self, track_id: int) -> dict | None:
         """Return the latest (frame, detection) snapshot for a body track, or None."""
         return self.model.body_id_engine.get_snapshot(track_id)
@@ -441,11 +481,19 @@ class CapturePipeline:
                     self.state.visual_filter,
                 )
                 # Snapshot the name dict for thread safety.
+                # Inject linked body names for face tracks that have no saved name.
                 name_snapshot = (
                     dict(self.state.face_id_names)
                     if self.state.tracking_enabled
                     else {}
                 )
+                if self.state.tracking_enabled:
+                    links = self.state.get_face_body_links_snapshot()
+                    for face_tid, body_tid in links.items():
+                        if face_tid not in name_snapshot:
+                            body_name = self.state.body_id_names.get(body_tid, "")
+                            if body_name:
+                                name_snapshot[face_tid] = body_name
                 annotated = draw_face_mesh(
                     draw_frame,
                     detections,
@@ -499,6 +547,27 @@ class CapturePipeline:
                         body_results = [
                             det.copy() for det in self._latest_body_identity_results
                         ]
+                    # Link face and body tracks for display-only name derivation.
+                    # Always call so links are cleared when faces or bodies disappear.
+                    self._update_face_body_links(detections, body_results)
+                    # Derive display name: own body name first, else linked face name.
+                    body_face_links = {
+                        b: f
+                        for f, b in self.state.get_face_body_links_snapshot().items()
+                    }
+                    for det in body_results:
+                        tid = det.get("track_id")
+                        if tid is None:
+                            continue
+                        own_name = self.state.body_id_names.get(tid)
+                        if own_name:
+                            det["identity_name"] = own_name
+                        else:
+                            face_tid = body_face_links.get(tid)
+                            if face_tid is not None:
+                                linked_name = self.state.face_id_names.get(face_tid)
+                                if linked_name:
+                                    det["identity_name"] = linked_name
                     if body_results:
                         try:
                             draw_body_boxes(
@@ -506,6 +575,7 @@ class CapturePipeline:
                                 body_results,
                                 overlay_color=oc,
                                 thickness=self.state.line_thickness,
+                                font_scale=self.state.font_scale,
                             )
                         except Exception:
                             pass
@@ -548,7 +618,8 @@ class CapturePipeline:
                     if (
                         not self._cached_top_labels
                         or top_k_changed
-                        or self._detect_frame_num % config.CAMERA_UPDATE_INTERVAL == 0
+                        or self._detect_frame_num % config.INFERENCE_UPDATE_INTERVAL
+                        == 0
                     ):
                         label_best: dict[str, float] = {}
                         for d in detections:

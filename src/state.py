@@ -28,6 +28,9 @@ class AppState:
     active_face_ids: set[int] = field(default_factory=set)
     body_id_names: dict[int, str] = field(default_factory=dict)
     active_body_ids: set[int] = field(default_factory=set)
+    face_body_links: dict[int, int] = field(
+        default_factory=dict
+    )  # face_track_id → body_track_id
     privacy_mode: str = "None"
     visual_filter: str = "None"
 
@@ -105,6 +108,14 @@ class AppState:
         with self._lock:
             self.body_id_names.pop(track_id, None)
 
+    def set_face_body_links(self, links: dict[int, int]):
+        with self._lock:
+            self.face_body_links = dict(links)
+
+    def get_face_body_links_snapshot(self) -> dict[int, int]:
+        with self._lock:
+            return dict(self.face_body_links)
+
     def load_face_id_names(self):
         # Names are persisted in identities.json and reattached after
         # recognition; do not wipe the current session map on page refresh.
@@ -141,7 +152,7 @@ COLOR_MAP: dict[str, tuple[int, int, int]] = {
     "Yellow": (0, 255, 255),
     "Green": (0, 255, 0),
     "Cyan": (255, 255, 0),
-    "Magenta": (255, 0, 255),
+    "Blue": (255, 50, 0),
     "White": (255, 255, 255),
 }
 
