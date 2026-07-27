@@ -26,7 +26,9 @@ class VideoFilePlayer:
     def __init__(self, path: str, target_size: tuple[int, int] | None = None):
         self._path = path
         self._target_size = target_size
-        self._cap = cv2.VideoCapture(path)
+        self._cap = cv2.VideoCapture(path, cv2.CAP_FFMPEG)
+        if not self._cap.isOpened():
+            self._cap = cv2.VideoCapture(path)
         if not self._cap.isOpened():
             raise RuntimeError(f"Failed to open video: {path}")
         self._fps = self._cap.get(cv2.CAP_PROP_FPS) or 30.0
@@ -49,28 +51,26 @@ class VideoFilePlayer:
 
     @property
     def duration(self) -> float:
-        return self._frame_count / self._fps if self._fps > 0 else 0.0
+        if self._frame_count <= 0 or self._fps <= 0:
+            return 0.0
+        return self._frame_count / self._fps
 
     @property
     def progress(self) -> float:
-        if self._frame_count == 0:
+        duration = self.duration
+        if duration <= 0:
             return 0.0
-        cur = self._cap.get(cv2.CAP_PROP_POS_FRAMES)
-        return cur / self._frame_count
+        return min(1.0, max(0.0, self.current_time / duration))
 
     @property
     def current_time(self) -> float:
-        cur = self._cap.get(cv2.CAP_PROP_POS_FRAMES)
-        return cur / self._fps if self._fps > 0 else 0.0
+        return max(0.0, self._cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0)
 
     def seek(self, position: float):
         """Seek to *position* as a fraction (0.0 = start, 1.0 = end)."""
         with self._cap_lock:
-            frame_idx = int(position * self._frame_count)
-            self._cap.set(
-                cv2.CAP_PROP_POS_FRAMES,
-                max(0, min(frame_idx, self._frame_count - 1)),
-            )
+            target_ms = max(0.0, min(position, 1.0)) * self.duration * 1000.0
+            self._cap.set(cv2.CAP_PROP_POS_MSEC, target_ms)
             self._last_read_time = 0.0
 
     def read(self):

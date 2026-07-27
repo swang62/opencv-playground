@@ -379,7 +379,9 @@ def index():
         )
     ):
         with ui.row().classes("w-full flex-wrap items-start app-layout-row"):
-            with ui.column().style("flex: 3 1 0; min-width: 0; overflow: hidden;"):
+            with ui.column().style(
+                "flex: 3 1 0; min-width: 0; overflow: hidden; padding-bottom: 48px;"
+            ):
                 ui.label(config.TITLE).classes(
                     "text-h4 text-weight-bold text-center w-full q-mb-md"
                 )
@@ -496,6 +498,7 @@ def index():
                 # -- Video seek bar (visible only in video mode) --
                 seeking = False
                 _last_seek_time = 0.0
+                updating_seek_slider = False
 
                 def _fmt_time(seconds: float) -> str:
                     m, s = divmod(int(seconds), 60)
@@ -505,15 +508,20 @@ def index():
                     return f"{m}:{s:02d}"
 
                 def _on_seek_drag():
-                    nonlocal seeking
-                    seeking = True
-
-                def _on_seek_release():
                     nonlocal seeking, _last_seek_time
+                    if updating_seek_slider:
+                        return
+                    seeking = True
+                    _last_seek_time = time.time()
+
+                def _on_seek_change(e):
+                    nonlocal seeking, _last_seek_time
+                    if updating_seek_slider:
+                        return
                     seeking = False
                     _last_seek_time = 0.0
                     if _current_video_source is not None and pipeline is not None:
-                        pipeline.seek_video(seek_slider.value)
+                        pipeline.seek_video(e.value)
 
                 with ui.row().classes("w-full justify-center q-mt-xs") as seek_row:
                     seek_row.visible = False
@@ -522,6 +530,7 @@ def index():
                             min=0,
                             max=1,
                             step=0.001,
+                            on_change=_on_seek_change,
                         )
                         .props("dense")
                         .classes("w-full")
@@ -532,7 +541,6 @@ def index():
                         .style("min-width: 100px; text-align: right;")
                     )
                     seek_slider.on("update:model-value", _on_seek_drag)
-                    seek_slider.on("update:model-value-end", _on_seek_release)
 
                 with ui.row().classes("w-full justify-center q-mt-xs"):
                     with ui.element("div").classes("camera-toolbar"):
@@ -563,9 +571,11 @@ def index():
                             ui.label("")
                             .classes("text-caption text-white q-ml-xs")
                             .style(
-                                "max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"
+                                "max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer;"
                             )
                         )
+                        video_label.on("click", _pick_and_play)
+                        video_label.tooltip("Choose another video")
                         video_label.visible = False
                         roi_zoom_btn = ui.button(
                             "", icon="crop_free", on_click=on_roi_zoom
@@ -1164,7 +1174,9 @@ def index():
             current_face_chip_key, \
             current_body_chip_key, \
             current_frame_jpeg, \
-            _last_seek_time
+            seeking, \
+            _last_seek_time, \
+            updating_seek_slider
         update_camera_toggle_button()
         if pipeline is not None:
             jpeg = pipeline.get_latest_encoded_frame()
@@ -1179,12 +1191,12 @@ def index():
         if isinstance(_current_video_source, VideoFilePlayer):
             if seeking:
                 now = time.time()
-                if now - _last_seek_time > 0.25:
-                    _last_seek_time = now
-                    if pipeline is not None:
-                        pipeline.seek_video(seek_slider.value)
+                if now - _last_seek_time > 1.0:
+                    seeking = False
             else:
+                updating_seek_slider = True
                 seek_slider.value = _current_video_source.progress
+                updating_seek_slider = False
             seek_label.text = (
                 f"{_fmt_time(_current_video_source.current_time)}"
                 f" / {_fmt_time(_current_video_source.duration)}"

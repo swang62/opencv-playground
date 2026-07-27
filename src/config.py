@@ -15,7 +15,7 @@ BODY_REID_MODEL = f"{MODELS_DIR}/osnet_x1_0_msmt17.onnx"
 # ── Inference size ────────────────────────────────────────────────────────────
 INFERENCE_SIZE = 640
 INFERENCE_UPDATE_INTERVAL = 20
-DETECT_UPDATE_INTERVAL = 10
+DETECT_UPDATE_INTERVAL = 20
 
 # ── Camera ────────────────────────────────────────────────────────────────────
 CAMERA_INDEX = 0

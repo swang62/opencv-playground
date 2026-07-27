@@ -6,15 +6,15 @@ Real-time local vision playground built around [YOLOE-26](https://docs.ultralyti
 
 - Multiple detection modes: natural language prompts, prompt-free auto-detect, and tracking features
 - Multiple input sources: webcam, local video files, and YouTube links
-- Persistent face + body tracking and linking with stable track IDs and caching for maximum FPS
+- Persistent face + body tracking and linking with stable track IDs and inference caching
 
 ## Modes
 
-| Mode   | Core functionality                                                             |
-| ------ | ------------------------------------------------------------------------------ |
-| Find   | Search for objects with prompts like `"where is my red mug"`                   |
-| Detect | Detect all visible objects with custom thresholds                              |
-| Face   | Face mesh, body skeleton, facial attributes, image filters, and re-ID tracking |
+| Mode   | Core functionality                                                             | Demo                                 |
+| ------ | ------------------------------------------------------------------------------ | ------------------------------------ |
+| Find   | Search for objects with prompts like `"where is my red mug"`                   | ![Find tab](public/find_tab.gif)     |
+| Detect | Detect all visible objects with custom thresholds                              | ![Detect tab](public/detect_tab.gif) |
+| Face   | Face mesh, body skeleton, facial attributes, image filters, and re-ID tracking | ![Face tab](public/face_tab.gif)     |
 
 ## Input sources
 
@@ -28,16 +28,15 @@ All modes work the same across all sources.
 
 ## Libraries used for object detection
 
-| Component                | Used for                                                |
-| ------------------------ | ------------------------------------------------------- |
-| **YOLOE-26**             | Open-vocabulary object detection                        |
-| **YOLO-11 + OSNet**      | Body tracking and identification                        |
-| **MobileCLIP**           | Text embeddings for natural-language object prompts     |
-| **MediaPipe Landmarker** | 478-point face/skeleton/hand mesh                       |
-| **SCRFD + BYTETracker**  | Face detection and persistent IDs across frames         |
-| **ArcFace**              | Face recognition and identification                     |
-| **UniFace**              | Facial attributes: age, gender, emotion, race, spoofing |
-| **FAISS**                | Persistent embeddings store and retrieval               |
+| Component               | Used for                                                |
+| ----------------------- | ------------------------------------------------------- |
+| **YOLOE-26**            | Open-vocabulary object detection                        |
+| **YOLO-11 + OSNet**     | Body detection and identification                       |
+| **MobileCLIP**          | Text embeddings for natural-language prompts            |
+| **MediaPipe**           | 478-point face/skeleton/hand meshes                     |
+| **SCRFD + BYTETracker** | Face detecting and tracking                             |
+| **ArcFace**             | Face recognition and identification                     |
+| **UniFace**             | Facial attributes: age, gender, emotion, race, spoofing |
 
 ## Setup
 
