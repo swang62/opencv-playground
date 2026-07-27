@@ -18,11 +18,11 @@ Real-time local vision playground built around [YOLOE-26](https://docs.ultralyti
 
 ## Input sources
 
-| Source     | Behavior                                                        |
-| ---------- | --------------------------------------------------------------- |
-| Webcam     | Live camera feed                                                |
-| Video file | Native file picker, infinite looping, seek bar                  |
-| YouTube    | Paste a URL and stream with buffered playback (requires yt-dlp) |
+| Source     | Behavior                                      |
+| ---------- | --------------------------------------------- |
+| Webcam     | Live camera feed, play/pause controls         |
+| Video file | Native file picker, looping, seek bar         |
+| YouTube    | Paste a URL and stream with buffered playback |
 
 All modes work the same across all sources.
 
@@ -69,7 +69,7 @@ brew install yt-dlp     # macOS
 
 ## Acknowledgements
 
-Built on top of giants:
+Built on the shoulders of giants:
 
 - [Ultralytics YOLO](https://github.com/ultralytics/ultralytics)
 - [MediaPipe](https://github.com/google-ai-edge/mediapipe)
