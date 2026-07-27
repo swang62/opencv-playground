@@ -14,9 +14,9 @@ from ultralytics import YOLO
 from ultralytics.nn.text_model import MobileCLIPTS
 
 from src import config
-from src.body import BodyEngine
-from src.body_reid import BodyIdEngine
-from src.face import FaceEngine
+from src.detection.body_engine import BodyEngine
+from src.detection.body_reid import BodyIdEngine
+from src.detection.face_engine import FaceEngine
 
 logger = logging.getLogger(__name__)
 

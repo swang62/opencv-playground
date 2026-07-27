@@ -9,11 +9,12 @@ import time
 import cv2
 
 from src import config
-from src.body import draw_hand_skeleton, draw_pose_skeleton
-from src.camera import create_camera
-from src.detection import annotate_frame, draw_body_boxes, extract_detections
-from src.face import apply_privacy, draw_face_mesh
-from src.filters import apply_visual_filter
+from src.detection.extraction import extract_detections
+from src.overlay.annotations import annotate_frame, draw_body_boxes
+from src.overlay.face_overlay import apply_privacy, draw_face_mesh
+from src.overlay.filters import apply_visual_filter
+from src.overlay.skeleton import draw_hand_skeleton, draw_pose_skeleton
+from src.sources.camera import create_camera
 from src.state import color_name_to_bgr, get_predict_kwargs
 
 logger = logging.getLogger(__name__)
@@ -189,12 +190,6 @@ class CapturePipeline:
         self._paused = False
 
     def seek_video(self, position: float):
-        """Seek the video source to *position* (0.0–1.0).
-
-        The capture loop picks up from wherever the decoder lands (nearest keyframe).
-        Fails silently — the slider snaps back to the actual video position on the
-        next timer tick.
-        """
         cap = self._camera
         if cap is None or not hasattr(cap, "seek"):
             return
@@ -206,7 +201,6 @@ class CapturePipeline:
             self._latest_frame_time = time.time()
 
     def get_latest_encoded_frame(self) -> bytes | None:
-        """Return the most recent annotated image bytes, or None."""
         with self._result_lock:
             return self._latest_encoded_frame
 
@@ -229,6 +223,38 @@ class CapturePipeline:
                 if detection.get("track_id") == track_id:
                     return detection.copy()
         return None
+
+    def get_latest_body_snapshot(self, track_id: int) -> dict | None:
+        return self.model.body_id_engine.get_snapshot(track_id)
+
+    def capture_loop(self):
+        cap = self._camera
+        if cap is None:
+            return
+        logger.info("Capture loop started")
+        while not self.state.shutdown:
+            if self._paused:
+                time.sleep(0.05)
+                continue
+            ret, frame = cap.read()
+            if not ret:
+                if self._is_external_source:
+                    time.sleep(0.05)
+                    continue
+                msg = "Camera read failed"
+                logger.error(msg)
+                self.error = msg
+                self.state.set_camera_error(msg)
+                self.state.set_camera_ready(False)
+                break
+            now = time.time()
+            with self._frame_lock:
+                assert frame is not None
+                if self._mirror:
+                    frame = cv2.flip(frame, 1)
+                self._latest_frame = frame
+                self._latest_frame_time = now
+        logger.info("Capture loop ended")
 
     def face_id_loop(self):
         logger.info("Face ID loop started")
@@ -333,11 +359,6 @@ class CapturePipeline:
     def _update_face_body_links(
         self, face_detections: list[dict], body_detections: list[dict]
     ):
-        """Associate face→body tracks by face-center-in-body-bbox rule.
-
-        Stores the link map in state for the UI to style linked chips and for
-        the pipeline to derive display names without mutating saved-name maps.
-        """
         active_face_ids: set[int] = set()
         for det in face_detections:
             tid = det.get("track_id")
@@ -370,40 +391,6 @@ class CapturePipeline:
 
         self.state.set_face_body_links(links)
 
-    def get_latest_body_snapshot(self, track_id: int) -> dict | None:
-        """Return the latest (frame, detection) snapshot for a body track, or None."""
-        return self.model.body_id_engine.get_snapshot(track_id)
-
-    def capture_loop(self):
-        cap = self._camera
-        if cap is None:
-            return
-        logger.info("Capture loop started")
-        while not self.state.shutdown:
-            if self._paused:
-                time.sleep(0.05)
-                continue
-            ret, frame = cap.read()
-            if not ret:
-                if self._is_external_source:
-                    # Transient read failure after seeking (codec/keyframe issue) — retry
-                    time.sleep(0.05)
-                    continue
-                msg = "Camera read failed"
-                logger.error(msg)
-                self.error = msg
-                self.state.set_camera_error(msg)
-                self.state.set_camera_ready(False)
-                break
-            now = time.time()
-            with self._frame_lock:
-                assert frame is not None
-                if self._mirror:
-                    frame = cv2.flip(frame, 1)
-                self._latest_frame = frame
-                self._latest_frame_time = now
-        logger.info("Capture loop ended")
-
     def inference_loop(self):
         logger.info("Inference loop started")
         consecutive_errors = 0
@@ -417,8 +404,6 @@ class CapturePipeline:
                 time.sleep(0.005)
                 continue
 
-            # If display sleep has frozen the camera stream, skip inference
-            # so we don't busy-loop on a stale frame.
             if time.time() - frame_time > 1.5:
                 if not stall_warned:
                     logger.info("Camera stream stalled (display sleep?) — waiting")
@@ -427,11 +412,8 @@ class CapturePipeline:
                 continue
             stall_warned = False
 
-            # Capture mode once to avoid TOCTOU race: the UI thread can
-            # switch modes between the predict call and the branch below.
             mode = self.state.mode
 
-            # ROI crop: if active, run inference and display on the selected region.
             display_frame = frame
             if self.state.roi_active:
                 h, w = frame.shape[:2]
@@ -469,21 +451,18 @@ class CapturePipeline:
             ft = max(2, int((self.state.font_scale or config.FONT_SCALE) * 1.5))
 
             if mode == "face":
-                detections = results  # already extracted dicts from FaceEngine
+                detections = results
                 show_labels = self.state.tracking_enabled
                 if self.state.tracking_enabled:
-                    # Feed face identity worker
                     with self._face_id_lock:
                         self._face_id_input_frame = display_frame.copy()
                         self._face_id_input_detections = [
                             detection.copy() for detection in detections
                         ]
                         self._face_id_input_time = frame_time
-                    # Feed body identity worker (frame only; BodyIdEngine does its own detection)
                     with self._body_id_lock:
                         self._body_id_input_frame = display_frame.copy()
                         self._body_id_input_time = frame_time
-                    # Merge face identity results
                     if self.state.tracking_enabled:
                         with self._result_lock:
                             identity_results = [
@@ -495,7 +474,6 @@ class CapturePipeline:
                             identity_results,
                         )
                 else:
-                    # Clear face identity worker
                     with self._face_id_lock:
                         self._face_id_input_frame = None
                         self._face_id_input_detections = []
@@ -503,7 +481,6 @@ class CapturePipeline:
                     with self._result_lock:
                         self._latest_face_identity_results = []
                     self.state.set_active_face_ids(set())
-                    # Clear body identity worker
                     with self._body_id_lock:
                         self._body_id_input_frame = None
                         self._body_id_input_time = 0.0
@@ -519,8 +496,6 @@ class CapturePipeline:
                     draw_frame,
                     self.state.visual_filter,
                 )
-                # Snapshot the name dict for thread safety.
-                # Inject linked body names for face tracks that have no saved name.
                 name_snapshot = (
                     dict(self.state.face_id_names)
                     if self.state.tracking_enabled
@@ -580,16 +555,12 @@ class CapturePipeline:
                     except Exception:
                         pass
 
-                # Draw faint body outlines when tracking is enabled
                 if self.state.tracking_enabled:
                     with self._result_lock:
                         body_results = [
                             det.copy() for det in self._latest_body_identity_results
                         ]
-                    # Link face and body tracks for display-only name derivation.
-                    # Always call so links are cleared when faces or bodies disappear.
                     self._update_face_body_links(detections, body_results)
-                    # Derive display name: own body name first, else linked face name.
                     body_face_links = {
                         b: f
                         for f, b in self.state.get_face_body_links_snapshot().items()
@@ -620,7 +591,6 @@ class CapturePipeline:
                             pass
 
             else:
-                # Non-face mode: ensure body identity worker is cleared
                 with self._body_id_lock:
                     self._body_id_input_frame = None
                     self._body_id_input_time = 0.0
@@ -652,7 +622,6 @@ class CapturePipeline:
 
                     self._detect_frame_num += 1
 
-                    # Periodically recalculate which labels are top-N
                     top_k_changed = self.state.top_labels != self._last_top_k
                     if (
                         not self._cached_top_labels
@@ -674,8 +643,6 @@ class CapturePipeline:
                         )
                         self._last_top_k = self.state.top_labels
 
-                    # Keep cache limited to the current top-N labels so the
-                    # slider directly controls what can be shown.
                     self._cached_label_detections = {
                         label: boxes
                         for label, boxes in self._cached_label_detections.items()
@@ -687,18 +654,15 @@ class CapturePipeline:
                         if label in self._cached_top_labels
                     }
 
-                    # Group current frame detections by label
                     current_by_label: dict[str, list[dict]] = {}
                     for d in detections:
                         if d["label"] in self._cached_top_labels:
                             current_by_label.setdefault(d["label"], []).append(d)
 
-                    # Update cache with fresh detections for current top-N labels
                     for label, boxes in current_by_label.items():
                         self._cached_label_detections[label] = boxes
                         self._cached_label_last_seen[label] = self._detect_frame_num
 
-                    # Temporal smoothing only within the current top-N set.
                     merged = []
                     for label in list(self._cached_top_labels):
                         if label in current_by_label:

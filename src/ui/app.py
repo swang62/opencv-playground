@@ -22,13 +22,13 @@ from nicegui import app as napp
 from nicegui import ui
 
 from src import config
-from src.file_picker import pick_video
-from src.models import ModelBundle, get_device, load_model_bundle
-from src.pipeline import CapturePipeline
+from src.pipeline.models import ModelBundle, get_device, load_model_bundle
+from src.pipeline.pipeline import CapturePipeline
+from src.sources.video_source import VideoFilePlayer
+from src.sources.youtube_source import YouTubeSource
 from src.state import COLOR_MAP, AppState, color_name_to_hex
-from src.utils import normalize_query
-from src.video_source import VideoFilePlayer
-from src.youtube_source import YouTubeSource
+from src.utils.file_picker import pick_video
+from src.utils.query import normalize_query
 
 logger = logging.getLogger(__name__)
 

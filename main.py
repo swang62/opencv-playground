@@ -15,7 +15,7 @@ import absl.logging
 
 absl.logging.set_verbosity(absl.logging.ERROR)
 
-from src.app import main
+from src.ui.app import main
 
 os.dup2(_old_stderr, 2)
 os.close(_old_stderr)

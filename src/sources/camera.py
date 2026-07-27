@@ -20,7 +20,7 @@ if IS_MACOS:
     try:
         import AVFoundation as AV
         import CoreMedia as CM
-        import CoreVideo as CV
+        from Quartz import CoreVideo as CV
         import Foundation as FN
         from objc import super as objc_super
 
