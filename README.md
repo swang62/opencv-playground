@@ -18,25 +18,21 @@ Real-time local vision playground built around [YOLOE-26](https://docs.ultralyti
 
 ## Input sources
 
-| Source     | Behavior                                      |
-| ---------- | --------------------------------------------- |
-| Webcam     | Live camera feed, play/pause controls         |
-| Video file | Native file picker, looping, seek bar         |
-| YouTube    | Paste a URL and stream with buffered playback |
+- **Webcam** — Live camera feed, play/pause controls
+- **Video file** — Native file picker, looping, seek bar
+- **YouTube** — Paste a URL and stream with buffered playback
 
 All modes work the same across all sources.
 
 ## Libraries used for object detection
 
-| Component               | Used for                                                |
-| ----------------------- | ------------------------------------------------------- |
-| **YOLOE-26**            | Open-vocabulary object detection                        |
-| **YOLO-11 + OSNet**     | Body detection and identification                       |
-| **MobileCLIP**          | Text embeddings for natural-language prompts            |
-| **MediaPipe**           | 478-point face/skeleton/hand meshes                     |
-| **SCRFD + BYTETracker** | Face detecting and tracking                             |
-| **ArcFace**             | Face recognition and identification                     |
-| **UniFace**             | Facial attributes: age, gender, emotion, race, spoofing |
+- **YOLOE-26** — Open-vocabulary object detection
+- **YOLO-11 + OSNet** — Body detection and identification
+- **MobileCLIP** — Text embeddings for natural-language prompts
+- **MediaPipe** — 478-point face/skeleton/hand meshes
+- **SCRFD + BYTETracker** — Face detecting and tracking
+- **ArcFace** — Face recognition and identification
+- **UniFace** — Facial attributes: age, gender, emotion, race, spoofing
 
 ## Setup
 
